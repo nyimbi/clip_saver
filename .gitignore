@@ -1,0 +1,18 @@
+# macOS
+.DS_Store
+
+# Xcode per-user state: scheme ordering, window layout, breakpoints.
+# Specific to one machine and wrong to share.
+xcuserdata/
+*.xcuserstate
+*.xcworkspace/xcshareddata/IDEWorkspaceChecks.plist
+
+# Build products and code coverage emitted by `xcodebuild test`
+build/
+DerivedData/
+*.profraw
+*.profdata
+Archives/
+
+# The local zvec-grep workspace index
+.zvec-grep/

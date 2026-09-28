@@ -32,6 +32,9 @@
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		AD531AB62E3517D600138BAB /* Clipboard_saver */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				AD531ABF02E3517D600138BAB /* Exceptions for "Clipboard_saver" folder in "Clipboard_saver" target */,
+			);
 			path = Clipboard_saver;
 			sourceTree = "<group>";
 		};
@@ -46,6 +49,17 @@
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		AD531ABF02E3517D600138BAB /* Exceptions for "Clipboard_saver" folder in "Clipboard_saver" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Clipboard_saver.entitlements,
+				Info.plist,
+			);
+			target = AD531AB32E3517D600138BAB /* Clipboard_saver */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		AD531AB12E3517D600138BAB /* Frameworks */ = {
@@ -397,7 +411,8 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_PREVIEWS = YES;
-				GENERATE_INFOPLIST_FILE = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Clipboard_saver/Info.plist;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -422,7 +437,8 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_PREVIEWS = YES;
-				GENERATE_INFOPLIST_FILE = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Clipboard_saver/Info.plist;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -450,7 +466,7 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_VERSION = 5.0;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Clipboard_saver.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Clipboard_saver";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Clipboard_saver.app/Contents/MacOS/Clipboard_saver";
 			};
 			name = Debug;
 		};
@@ -467,7 +483,7 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_VERSION = 5.0;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Clipboard_saver.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Clipboard_saver";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Clipboard_saver.app/Contents/MacOS/Clipboard_saver";
 			};
 			name = Release;
 		};
