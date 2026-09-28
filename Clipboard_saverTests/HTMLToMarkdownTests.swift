@@ -277,6 +277,73 @@ final class HTMLToMarkdownTests: XCTestCase {
         XCTAssertNotNil(HTMLToMarkdown.convert("<p>text <strong>bold"))
     }
 
+    // MARK: - Malformed and hostile input
+
+    /// Regression: a pasteboard holding tens of thousands of unclosed tags
+    /// segfaulted the process. `Element` is recursive, so a deeply nested
+    /// document is a deeply nested value, and releasing it overflows the
+    /// stack. The parser now caps nesting at `maximumDepth`.
+    func testDeeplyNestedUnclosedTagsDoNotCrash() {
+        let html = String(repeating: "<div>", count: 200_000) + "x"
+        XCTAssertNotNil(HTMLToMarkdown.convert(html))
+    }
+
+    func testDeeplyNestedBalancedTagsDoNotCrash() {
+        let html = String(repeating: "<div>", count: 100_000)
+            + String(repeating: "</div>", count: 100_000)
+        // No text, so nil is the right answer; surviving at all is the point.
+        XCTAssertNil(HTMLToMarkdown.convert(html))
+    }
+
+    func testDeeplyNestedListsDoNotCrash() {
+        let html = String(repeating: "<ul><li>", count: 5_000)
+            + "x"
+            + String(repeating: "</li></ul>", count: 5_000)
+        XCTAssertNotNil(HTMLToMarkdown.convert(html))
+    }
+
+    func testUnbalancedCloseTagsDoNotCrash() {
+        // Stray close tags must be ignored, not consume the document.
+        XCTAssertEqual(HTMLToMarkdown.convert("<p>keep me</p>" + String(repeating: "</div></p></ul>", count: 100_000)),
+                       "keep me")
+    }
+
+    func testMalformedEntitiesDoNotCrash() {
+        XCTAssertNotNil(HTMLToMarkdown.convert(String(repeating: "&#xZZ;&nope;&", count: 50_000)))
+    }
+
+    /// A truncated pasteboard can leave an attribute quote unclosed. A browser
+    /// would run the value to the end of the document and lose the body; this
+    /// converter rewinds so the text is still recovered.
+    func testUnterminatedAttributeQuoteStillYieldsItsText() {
+        XCTAssertEqual(HTMLToMarkdown.convert(#"<p title="never closes>text"#), "text")
+    }
+
+    /// Content deeper than the ceiling is flattened into the innermost element
+    /// that was kept, rather than being dropped.
+    func testContentBelowTheDepthCeilingSurvives() {
+        let deep = HTMLToMarkdown.maximumDepth + 50
+        let html = String(repeating: "<div>", count: deep) + "still here" + String(repeating: "</div>", count: deep)
+        let markdown = HTMLToMarkdown.convert(html)
+        XCTAssertEqual(markdown, "still here")
+    }
+
+    // MARK: - Throughput
+
+    /// A guard against reintroducing super-linear behaviour. The real figure
+    /// for this input is around 15 ms, so the bound leaves roughly two orders
+    /// of magnitude for a slow machine while still failing on a quadratic
+    /// regression that would take minutes.
+    func testLargeDocumentConvertsQuickly() {
+        let section = "<h2>S</h2><p>Body with <b>bold</b> and <a href=\"https://e.test/1\">link</a>.</p><ul><li>a</li><li>b</li></ul>"
+        let html = String(repeating: section, count: 3_000)
+        let start = DispatchTime.now()
+        let markdown = HTMLToMarkdown.convert(html)
+        let elapsed = Double(DispatchTime.now().uptimeNanoseconds - start.uptimeNanoseconds) / 1_000_000_000
+        XCTAssertNotNil(markdown)
+        XCTAssertLessThan(elapsed, 5.0, "converting \(html.utf8.count) bytes took \(elapsed) s")
+    }
+
     // MARK: - Escaping
 
     func testLineStartMarkersAreEscaped() {

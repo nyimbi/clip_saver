@@ -1,0 +1,279 @@
+# Clipboard Saver
+
+> A macOS `NSServices` app that writes the clipboard to a file from the Finder
+> context menu, converting HTML or RTF to Markdown. No window, no Dock icon; it
+> terminates after each save. Repository: github.com/nyimbi/clip_saver.
+
+## What it does
+
+Reads the richest representation on the general pasteboard, converts it to
+Markdown, derives a filename from the document's own heading, and writes one
+file per destination folder. The filename is offered in an `NSSavePanel` and
+stays editable. Writes are atomic and never overwrite.
+
+## Repository shape
+
+The git repository is the inner `Clipboard_saver/` directory, which contains the
+Xcode project. A parent directory holds two superseded artifacts that are NOT
+in the repository and NOT built: `save_clipboard.py` (dead 35-line Python
+prototype) and `QuickAction/save_clipboard_md.sh` (working 450-line zsh Quick
+Action with different behaviour — no HTML conversion, appends to `.md`, no save
+panel).
+
+## Build and test
+
+- `xcodebuild -project Clipboard_saver.xcodeproj -scheme Clipboard_saver -destination 'platform=macOS' test`
+- Current status: **126 tests, 0 failures** (123 unit, 3 UI). Clean Release build with zero
+  warnings from project sources (the single warning emitted is from Xcode's
+  `appintentsmetadataprocessor` toolchain step).
+- Target: macOS 15.5+, Swift 5 language mode, bundle id `datacraft.Clipboard-saver`.
+- Deployment copies to `/Applications/Clipboard_saver.app`. It must be launched
+  once after install so it registers itself as a login item.
+
+## Source files
+
+### `Clipboard_saver/Clipboard_saverApp.swift` (~322 lines)
+
+The services provider and save pipeline.
+
+- `@main Clipboard_saverApp` — declares only `Settings { EmptyView() }`; there is
+  no window by design. `LSUIElement` in the plist keeps it out of the Dock.
+- `AppDelegate` — `NSApplicationDelegate` conforming to `NSServicesProvider`.
+  - `applicationDidFinishLaunching` sets `NSApp.servicesProvider = self`, calls
+    `NSUpdateDynamicServices()`, then `registerAtLoginIfNeeded()`.
+  - `registerAtLoginIfNeeded()` calls `SMAppService.mainApp.register()` unless
+    the status is already `.enabled`. **This is load-bearing**: Finder only lists
+    the services while the provider process is running, and nothing else
+    launches a Services-only app, so without a login item the tool is invisible
+    after every reboot.
+  - `run(_:userData:error:)` — "Save Clipboard to File", from the Services menu
+    of any app. Destination is the Desktop.
+  - `saveToFolder(_:userData:error:)` — right-clicked folder(s) or file(s).
+    Reads file URLs from the service pasteboard; the clipboard *content* comes
+    from `NSPasteboard.general`.
+  - `saveHere(_:userData:error:)` — background of a Finder window. Resolves the
+    folder via an `NSAppleScript` `tell application "Finder"` call. This is the
+    only service Finder offers on a background right-click.
+  - `saveInteractively(pasteboard:into:reveal:error:)` — reads the clipboard,
+    computes a suggested name, shows the save panel, then writes. Modal on
+    purpose: the process terminates on return, so an async panel would be killed
+    before the user answered it.
+  - `askForFilename(suggesting:in:)` — `NSSavePanel.runModal()` seeded with the
+    derived name. The typed value is re-sanitised (the field accepts anything,
+    including path separators) and a missing extension is restored.
+  - `save(pasteboard:into:)` / `save(export:into:name:)` — the write path,
+    returning `SaveOutcome` (`.written` / `.cancelled` / `.failed`) rather than
+    terminating. This split is what makes the pipeline testable in-process.
+  - `resolveDestinations(from:frontWindowFolder:)` — selection first, front
+    Finder window as fallback.
+  - `destinationFolders(from:)` — a selected folder is used directly; a selected
+    file contributes its parent. De-duplicates. `public.file-url` first, then
+    the legacy `NSFilenamesPboardType`.
+  - `finish(_:reveal:_:)` — a non-nil `error` pointer makes macOS show an
+    alert; nil completes silently. Cancelling is not an error.
+
+### `Clipboard_saver/MarkdownExporter.swift` (90 lines)
+
+Chooses the representation. `enum MarkdownSource` carries the extension policy:
+`.markdown`/`.html`/`.rtf` → `.md`, `.plain` → `.txt`.
+
+Precedence in `export(from:)`: plain text that is already Markdown → HTML →
+RTF → plain. Plain Markdown winning over HTML is deliberate; see
+`looksLikeMarkdown`.
+
+`looksLikeMarkdown` matches a combined `NSRegularExpression` of block syntax
+(ATX heading, fence, list marker, blockquote, table row, thematic break,
+setext underline). Any single hit counts. The previous rule required three list
+lines *or* a heading *and* a list, so a ChatGPT answer that was a heading
+followed by prose was classified plain and saved as `.txt`.
+
+### `Clipboard_saver/HTMLToMarkdown.swift` (1133 lines)
+
+The bulk of the code. A single-pass byte-level tokenizer over the UTF-8 bytes
+of the HTML, building a small `Element`/`Node` tree, then rendering to Markdown
+chunks.
+
+- `parse(_:)` — tokenizer. Handles comments, doctype, start/end tags, void
+  elements, quoted and unquoted attribute values, and entity decoding
+  (`decodeEntities`, ~60 named entities plus numeric).
+  - `static let maximumDepth = 256`. **Load-bearing.** `Element` is a recursive
+    value type, so 50,000 unclosed `<div>` tags built a 50,000-deep tree whose
+    release recursed 50,000 frames and killed the process with SIGSEGV. Past the
+    ceiling elements are not pushed; their content attaches to the innermost
+    element that was kept.
+  - Unterminated attribute quote rewinds rather than consuming to end of input —
+    a truncated pasteboard would otherwise lose the entire document body.
+  - `implicitClosures` closes an open `li`/`p`/`tr`/`td` on a new one, so sloppy
+    markup does not nest items inside their predecessors.
+  - `ignoredElements` (script, style, svg, form, …) skips to the matching close
+    tag; text is discarded while skipping.
+- `render(_:)` — walks the tree into `Chunk` values (heading, paragraph, quote,
+  code, listItem, rule, table).
+- List identity: each `<ul>`/`<ol>` gets an id and an *ancestry* chain
+  (`ListFrame.ancestry`). `belongsToSameList(as:after:)` treats two items as the
+  same list when one ancestry is a prefix of the other. This is what keeps a
+  nested list tight against its parent while keeping two sibling lists apart —
+  an `<ol>` followed by a `<ul>` needs a blank line or they fuse into one list.
+- `join(_:)` — separator logic (blank line vs single newline) plus fence
+  widening: `fenceLength(for:)` counts the longest backtick run *anywhere* in
+  the block, so content containing ``` still renders.
+- `escapeInline` escapes `\ ` `` ` `` `*` `[` `]` `<` `>`. `escapeLineStart`
+  escapes leading `#`, `>`, `~`, `-`, `+`, `=` and ordered-list markers —
+  escaping the marker itself (`1\.`) rather than the digit, since `\1.` would
+  not prevent an ordered list.
+- `normalize(_:)` collapses HTML whitespace runs to a single space but
+  *preserves* leading/trailing space, so `Hello <b>world</b> ok` does not fuse to
+  `Hello **world**ok`. `collapse` trims.
+- Style inference for `style="font-weight:700"` / `font-style:italic` /
+  `monospace` / `line-through`, because Safari emits styled spans rather than
+  `<b>`/`<i>`.
+
+### `Clipboard_saver/RTFToMarkdown.swift` (343 lines)
+
+Fallback for RTF-only pasteboards. RTF has no tag tree, so structure comes from
+the style run.
+
+- `modalFontSize(_:)` — the most common font size is body text, ties going to
+  the smaller. **Load-bearing.** The previous thresholds mapped anything between
+  11 and 15.5pt to heading level 5, and the system body size is 13pt, so every
+  paragraph of prose came out as `##### text`.
+- `rankHeadingSizes(_:bodySize:)` — only sizes clearly larger than the body
+  *and* bold become headings, ranked to levels 1…6.
+- `bullet(_:)` — finds the marker after leading whitespace, because
+  `NSAttributedString` pads bullets with tabs. Returns a `Bullet` struct with
+  the text after the marker. `isListBody` rejects a body containing a tab or
+  empty, which is what separates `"\t1\tFirst"` (a list item) from `"1\t2\t3"`
+  (a three-column row).
+- `renderTable(_:)` — column count is the *mode* of cell counts across the
+  block. The previous divisor search could not tell a 2×3 table from a 3×2 one.
+
+### `Clipboard_saver/FilenameGenerator.swift` (159 lines)
+
+- `title(from:)` — first non-empty line, preferring an ATX heading (closing
+  hashes stripped) or a setext underline. `clipboard_save_<timestamp>` fallback.
+- `resolveCollision(_:in:)` — appends ` (n)` until free, bounded at 9,999.
+- `String.sanitizedForFilename` — removes `[/:*?"<>|\]`, collapses whitespace,
+  truncates to 80 chars **on a word boundary**, strips trailing separators (so
+  `Just a sentence.` does not become `Just a sentence..txt`), strips leading
+  dots, and escapes reserved device names.
+- `String.sanitizedForTypedFilename` — the same cleaning but no 80-char cut,
+  because silently shortening a name a person just typed is worse than a long
+  filename. Only the 240-byte APFS component limit applies.
+
+### `Clipboard_saver/Info.plist`
+
+Declares the three services plus the bundle identity keys. `GENERATE_INFOPLIST_FILE`
+is `NO` for this target, so `CFBundleIdentifier`, `CFBundleExecutable`,
+`CFBundlePackageType`, `CFBundleShortVersionString` and `CFBundleVersion` are
+**declared here explicitly** — omitting them means LaunchServices cannot
+register the app and the service never appears.
+
+- `LSUIElement` = true (agent app, no Dock icon).
+- `NSServices`: `run` (accepts `NSStringPboardType`, `public.html`, `public.rtf`
+  — the last two are what let the Services-menu path convert rich content at all),
+  `saveToFolder` (accepts `NSFilenamesPboardType`, `public.file-url`),
+  `saveHere` (no `NSSendTypes`, therefore offered unconditionally).
+- Both Finder services carry `NSRequiredContext` = `com.apple.finder`.
+
+### `Clipboard_saver/Clipboard_saver.entitlements`
+
+`com.apple.security.app-sandbox` = false. Writing to arbitrary folders and
+sending AppleEvents to Finder both require it.
+
+## Test files
+
+### `Clipboard_saverTests/HTMLToMarkdownTests.swift` (52 tests)
+
+Structure preservation per construct, escaping, task lists, tables, entities,
+and hostile input: 200k unclosed tags, 100k balanced, 5k nested lists, 100k
+unbalanced closes, malformed entity soup, unterminated attribute quote, plus
+`testLargeDocumentConvertsQuickly` (63 KB under 5 s — ~300× headroom over the
+real 15 ms) as a guard against reintroducing super-linear behaviour.
+
+### `Clipboard_saverTests/ServiceContractTests.swift` (13 tests)
+
+Asserts the `Info.plist` ↔ runtime contract that fails *silently* otherwise:
+`CFBundleIdentifier`/`CFBundleExecutable`/`CFBundlePackageType` present and
+correct; exactly three services; every `NSMessage` resolves to a real
+`…:userData:error:` selector on `AppDelegate` (enumerated via
+`class_copyMethodList`); `NSPortName` equals the executable; the background
+service is unconstrained while the folder service requires a file selection;
+`NSAppleEventsUsageDescription` is present.
+
+### `Clipboard_saverTests/SavePipelineTests.swift` (14 tests)
+
+Pasteboard → file on disk, extension selection, repeated saves not overwriting,
+one file per destination, empty/missing/non-directory destinations reported
+rather than crashed, and destination resolution including the background
+fallback.
+
+### `Clipboard_saverTests/FilenameGeneratorTests.swift` (15 tests)
+
+Heading, trailing-hash, setext and first-line title extraction; illegal
+characters, newlines, control characters, leading dots, reserved names,
+word-boundary truncation, Unicode preservation; sequential collision suffixes.
+
+### `Clipboard_saverTests/ChosenFilenameTests.swift` (10 tests)
+
+The name confirmed in the save panel is used verbatim; the first destination
+may replace, additional destinations are collision-resolved; typed names are
+sanitised but not shortened to the readability limit.
+
+### `Clipboard_saverTests/MarkdownExporterTests.swift` (9 tests)
+
+Representation precedence against synthetic multi-type pasteboards, plus the
+Markdown-detection table.
+
+### `Clipboard_saverTests/RTFToMarkdownTests.swift` (10 tests)
+
+Body prose is not a heading, large bold text is, monospace fences, tab-prefixed
+bullets, ordered bullets, indented block quotes, tab-delimited tables, ragged
+row padding, three-column non-transposition.
+
+### `Clipboard_saverUITests/` (3 tests)
+
+Untouched Xcode templates — a launch smoke test and a launch-performance
+measurement. They assert nothing about this app.
+
+## Defects found and fixed
+
+All four were invisible to the build, and the first two were invisible to code
+review as well.
+
+1. **No bundle identity.** `CFBundleIdentifier` and `CFBundleExecutable` were
+   absent. LaunchServices cannot register or launch a Services app without an
+   identifier, so the context menu never offered the service. No build error.
+2. **Services invisible unless the provider is running.** Finder only lists them
+   while the process is alive; nothing launched a Services-only app, so after a
+   reboot the tool was gone until opened by hand. Fixed with a login item.
+3. **Test suite did not compile** (`ClipboardManagerTests.swift:83`, unhandled
+   `try`), so nothing had ever been verified, and over half the tests asserted
+   on `AppDelegate.defaultFileName` — a method with no call site, alongside
+   `ContentView.swift`, which was never in any `Scene` and so compiled but never
+   ran.
+4. **The converter destroyed the document.** Round-tripping HTML through
+   `NSAttributedString` and re-deriving structure from font metrics lost
+   paragraphs (became `#####`), lists (`"\t•\tItem"`), tables, blockquotes and
+   link targets.
+
+Plus two found by fuzzing the parser afterwards:
+
+5. **SIGSEGV on deep nesting** — recursive `Element` deallocation, capped at 256.
+6. **Content loss on a truncated pasteboard** — unterminated attribute quote.
+
+One change was made and reverted after testing: collapsing `saveToFolder` and
+`saveHere` into a single service. It looked like a duplicate-menu-entry
+cleanup, but Finder supplies no file URL on a background right-click, so
+`saveToFolder` is not offered there and removing `saveHere` removed the only way
+to save into the current folder.
+
+## Known limitations
+
+- `saveToFolder` (right-click a folder) is unit-tested and appears in the real
+  context menu, but was not isolated in an end-to-end GUI run. The background
+  `saveHere` path was.
+- The `NSFilenamesPboardType` fallback branch is defensive and untestable —
+  that pasteboard type cannot be synthesised.
+- The app icon asset catalog is empty; Finder shows a generic icon.
+- The UI test target asserts nothing meaningful.
+- No licence file.

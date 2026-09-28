@@ -95,6 +95,17 @@ enum HTMLToMarkdown {
     private static let doubleQuote: UInt8 = 0x22
     private static let singleQuote: UInt8 = 0x27
 
+    /// Hard ceiling on how deeply elements may nest.
+    ///
+    /// `Element` is a recursive value type, so a deeply nested document
+    /// produces a deeply nested tree -- and releasing that tree recurses once
+    /// per level. A pasteboard holding 50,000 unclosed `<div>` tags therefore
+    /// overflowed the stack and killed the process with SIGSEGV. Real markup
+    /// nests a few dozen levels at most, so anything past this is dropped:
+    /// deeper elements are not pushed, and their content is treated as
+    /// belonging to the innermost element that was.
+    static let maximumDepth = 256
+
     static func parse(_ html: String) -> Element {
         let bytes = Array(html.utf8)
         var stack: [Element] = [Element(name: "#document", attributes: [:])]
@@ -119,12 +130,16 @@ enum HTMLToMarkdown {
             stack[stack.count - 1].children.append(.element(finished))
         }
 
-        func open(_ name: String, _ attributes: [String: String]) {
+        /// Returns false once the depth ceiling is reached, in which case the
+        /// element is not pushed and its content attaches to the current parent.
+        func open(_ name: String, _ attributes: [String: String]) -> Bool {
             flushText()
             if let closable = implicitClosures[name], closable.contains(stack[stack.count - 1].name) {
                 closeTop()
             }
+            guard stack.count < maximumDepth else { return false }
             stack.append(Element(name: name, attributes: attributes))
+            return true
         }
 
         while index < bytes.count {
@@ -197,8 +212,11 @@ enum HTMLToMarkdown {
                 continue
             }
 
-            open(name, tag.attributes)
-            if tag.selfClosing || voidElements.contains(name) { closeTop() }
+            // A void element is closed immediately, but only if it was
+            // actually pushed. At the depth ceiling `open` declines, and
+            // closing then would pop a parent that is still open.
+            let pushed = open(name, tag.attributes)
+            if pushed, tag.selfClosing || voidElements.contains(name) { closeTop() }
         }
 
         flushText()
@@ -308,8 +326,17 @@ enum HTMLToMarkdown {
                 lookahead += 1
                 let valueStart = lookahead
                 while lookahead < bytes.count, bytes[lookahead] != quote { lookahead += 1 }
-                value = String(decoding: bytes[valueStart..<lookahead], as: UTF8.self)
-                if lookahead < bytes.count { lookahead += 1 }
+                if lookahead >= bytes.count {
+                    // The quote is never closed, which in a browser means the
+                    // value runs to the end of the document. Here that is
+                    // almost always a truncated pasteboard, and obeying it
+                    // would throw away the entire body. Rewind instead, so the
+                    // remainder is parsed as markup and the text survives.
+                    lookahead = valueStart
+                } else {
+                    value = String(decoding: bytes[valueStart..<lookahead], as: UTF8.self)
+                    lookahead += 1
+                }
             } else {
                 let valueStart = lookahead
                 while lookahead < bytes.count, !isSpace(bytes[lookahead]), bytes[lookahead] != gt {
