@@ -28,6 +28,31 @@ final class ConversationModelTests: XCTestCase {
         XCTAssertEqual(decoded, conversation)
     }
 
+    /// A page capture arrives as HTML and is converted in Swift. An absent
+    /// `format` must mean Markdown, or every sender that predates the field
+    /// fails to decode.
+    func testAnAbsentFormatDecodesAsMarkdown() throws {
+        // Escaped, not a raw string: the body contains a `#`, which would close
+        // a `#"..."#` literal early.
+        let json = "{\"role\":\"user\",\"body\":\"a heading\"}"
+        let turn = try JSONDecoder().decode(Turn.self, from: Data(json.utf8))
+        XCTAssertEqual(turn.format, .markdown)
+    }
+
+    func testAnHTMLTurnRoundTrips() throws {
+        let turn = Turn(role: .assistant, body: "<p>hi</p>", format: .html)
+        let data = try JSONEncoder().encode(turn)
+        let back = try JSONDecoder().decode(Turn.self, from: data)
+        XCTAssertEqual(back.format, .html)
+    }
+
+    /// A turn with no tool calls omits the field, keeping a conversation's
+    /// payload small -- a long thread is mostly text.
+    func testAnEmptyToolCallListIsOmittedOnTheWire() throws {
+        let data = try JSONEncoder().encode(Turn(role: .user, body: "q"))
+        XCTAssertFalse(String(decoding: data, as: UTF8.self).contains("toolCalls"))
+    }
+
     func testUnknownSourceDecodesInsteadOfFailing() throws {
         // A product this build has never heard of must not lose the whole
         // conversation to a decoding error.

@@ -12,6 +12,12 @@ enum TurnRole: String, Codable, CaseIterable {
     case reasoning
 }
 
+/// How a turn's body is encoded on the wire.
+enum BodyFormat: String, Codable {
+    case markdown
+    case html
+}
+
 /// One message in a conversation.
 ///
 /// `body` is already Markdown. Extraction turns the DOM into a structural
@@ -26,19 +32,29 @@ struct Turn: Codable, Equatable, Hashable {
     /// included or dropped without re-parsing the message.
     var reasoning: String?
     var toolCalls: [ToolCall]
+    /// How `body` is encoded.
+    ///
+    /// Conversions are almost always Markdown already, and converting twice
+    /// would mangle it. But a page capture arrives as HTML from the browser, and
+    /// converting it there would mean shipping the structural converter into
+    /// JavaScript -- so the body is tagged and the *app* does the work, which is
+    /// where the 64 tests of it live.
+    var format: BodyFormat
 
     init(
         role: TurnRole,
         body: String,
         timestamp: Date? = nil,
         reasoning: String? = nil,
-        toolCalls: [ToolCall] = []
+        toolCalls: [ToolCall] = [],
+        format: BodyFormat = .markdown
     ) {
         self.role = role
         self.body = body
         self.timestamp = timestamp
         self.reasoning = reasoning
         self.toolCalls = toolCalls
+        self.format = format
     }
 
     /// Decoded explicitly rather than synthesised, because a default in an
@@ -50,7 +66,7 @@ struct Turn: Codable, Equatable, Hashable {
     /// in fact well formed -- an unhelpful answer to a correct message, and one
     /// that would have been blamed on the extension.
     enum CodingKeys: String, CodingKey {
-        case role, body, timestamp, reasoning, toolCalls
+        case role, body, timestamp, reasoning, toolCalls, format
     }
 
     init(from decoder: Decoder) throws {
@@ -60,6 +76,8 @@ struct Turn: Codable, Equatable, Hashable {
         timestamp = try container.decodeIfPresent(Date.self, forKey: .timestamp)
         reasoning = try container.decodeIfPresent(String.self, forKey: .reasoning)
         toolCalls = try container.decodeIfPresent([ToolCall].self, forKey: .toolCalls) ?? []
+        // Absent means Markdown, which is what every existing sender means.
+        format = try container.decodeIfPresent(BodyFormat.self, forKey: .format) ?? .markdown
     }
 
     func encode(to encoder: Encoder) throws {
@@ -72,6 +90,9 @@ struct Turn: Codable, Equatable, Hashable {
         // conversation with no tool calls at all.
         if !toolCalls.isEmpty {
             try container.encode(toolCalls, forKey: .toolCalls)
+        }
+        if format != .markdown {
+            try container.encode(format, forKey: .format)
         }
     }
 }

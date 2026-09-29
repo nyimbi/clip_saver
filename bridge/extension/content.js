@@ -9,6 +9,7 @@
  */
 
 import { adapterFor } from './adapters.js';
+import { extractPage } from '../src/page.js';
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 	switch (message?.action) {
@@ -39,6 +40,20 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 				location: { href: location.href, hostname: location.hostname },
 				adapter: serialiseAdapter(adapter),
 				selection,
+			});
+			return;
+		}
+
+		case 'extractPage': {
+			// Reached only from the context menu, so `activeTab` has been granted
+			// for this page and no standing host access is needed.
+			const result = extractPage(document, new URL(location.href));
+			sendResponse({
+				supported: true,
+				page: result.ok
+					? { html: result.html, title: result.title, confidence: result.confidence }
+					: null,
+				reason: result.ok ? null : result.reason,
 			});
 			return;
 		}

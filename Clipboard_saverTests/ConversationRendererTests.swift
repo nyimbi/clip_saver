@@ -316,3 +316,35 @@ final class ConversationRendererTests: XCTestCase {
         XCTAssertTrue(markdown.contains("\n```\n\nAnswer"))
     }
 }
+
+final class HTMLTurnTests: XCTestCase {
+
+    /// A page capture sends HTML and the app converts it, so the structural
+    /// converter stays in one place rather than being reimplemented in
+    /// JavaScript for the extension.
+    func testAnHTMLTurnIsConvertedWhenRendered() {
+        let turn = Turn(
+            role: .assistant,
+            body: "<h1>Title</h1><p>Prose with <strong>emphasis</strong>.</p>",
+            format: .html
+        )
+        let markdown = ConversationRenderer.renderTurn(turn)
+        XCTAssertTrue(markdown.contains("# Title"))
+        XCTAssertTrue(markdown.contains("**emphasis**"))
+    }
+
+    /// Converting twice would mangle Markdown, which is why the format is
+    /// explicit rather than sniffed.
+    func testAMarkdownTurnIsNotConverted() {
+        let turn = Turn(role: .assistant, body: "Use `#selector` and a & b", format: .markdown)
+        let markdown = ConversationRenderer.renderTurn(turn)
+        XCTAssertTrue(markdown.contains("`#selector`"))
+    }
+
+    /// A conversion that fails leaves the raw HTML visible, rather than an empty
+    /// turn that reads as a message with no content.
+    func testFailedConversionLeavesSomethingVisible() {
+        let turn = Turn(role: .assistant, body: "", format: .html)
+        XCTAssertEqual(ConversationRenderer.renderTurn(turn), "")
+    }
+}

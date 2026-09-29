@@ -1,0 +1,91 @@
+<!doctype html>
+<!--
+  A technical article with the surrounding furniture a real page has:
+  navigation, a cookie banner, a newsletter prompt, a related-links rail and a
+  comment thread. The adapter's job is to find the article underneath, and the
+  fixture exists to make that hard rather than easy.
+-->
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<title>Understanding structured concurrency — Example Dev Blog</title>
+</head>
+<body>
+	<header class="site-header">
+		<nav class="site-nav">
+			<a href="/">Home</a> <a href="/blog">Blog</a> <a href="/docs">Docs</a> <a href="/pricing">Pricing</a>
+		</nav>
+	</header>
+
+	<div class="cookie-consent" role="dialog">
+		<p>We use cookies. <button>Accept all</button> <button>Reject non-essential</button></p>
+	</div>
+
+	<main>
+		<article class="post-body">
+			<h1>Understanding structured concurrency</h1>
+
+			<p>Structured concurrency means a child task cannot outlive the scope that
+			created it. The lifetime of the work is visible in the shape of the code,
+			which is the whole argument for it.</p>
+
+			<p>Consider a function that loads three resources concurrently. The
+			straightforward version creates three tasks and awaits them in order,
+			which is sequential in all but name:</p>
+
+			<pre><code class="language-swift">let a = loadA()
+let b = loadB()
+let c = loadC()
+return (a, b, c)</code></pre>
+
+			<p>A task group says the same thing and enforces it. The group is the
+			scope: when it exits, every child it started has finished or been
+			cancelled, and there is no way to leak one past the closing brace.</p>
+
+			<pre><code class="language-swift">await withTaskGroup(of: Value.self) { group in
+	for loader in loaders {
+		group.addTask { await loader() }
+	}
+	var results: [Value] = []
+	for await value in group { results.append(value) }
+	return results
+}</code></pre>
+
+			<p>The difference matters most under failure. If one child throws, the
+			group cancels the rest and rethrows, so a partial result never escapes
+			and a cancelled scope never leaves orphaned work running.</p>
+
+			<table>
+				<thead><tr><th>Construct</th><th>Waits for</th><th>On error</th></tr></thead>
+				<tbody>
+					<tr><td>async let</td><td>a fixed set</td><td>rethrows at the await</td></tr>
+					<tr><td>Task group</td><td>a dynamic set</td><td>cancels siblings</td></tr>
+				</tbody>
+			</table>
+
+			<p>There is a cost. A group allocates, an <code>async let</code> does
+			not, and for a handful of independent calls the simpler form reads
+			better. Reach for the group when the set is dynamic or when the failure
+			semantics matter.</p>
+		</article>
+
+		<aside class="related-posts">
+			<h2>Related</h2>
+			<ul>
+				<li><a href="/a">Actors and isolation</a></li>
+				<li><a href="/b">Sendable in practice</a></li>
+				<li><a href="/c">Cancellation and cleanup</a></li>
+			</ul>
+		</aside>
+	</main>
+
+	<div class="newsletter-signup">
+		<p>Get the newsletter</p>
+		<form><input type="email"><button>Subscribe</button></form>
+	</div>
+
+	<footer class="site-footer">
+		<p>© Example Dev Blog</p>
+	</footer>
+</body>
+</html>

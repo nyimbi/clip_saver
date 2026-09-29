@@ -10,6 +10,7 @@ import { adapterFor } from './adapters.js';
 import { ExtractionError, extractConversation, saveConversation } from './extract.js';
 
 const MENU_SAVE = 'clipboard-saver-save-conversation';
+const MENU_SAVE_PAGE = 'clipboard-saver-save-page';
 const MENU_CANCEL = 'clipboard-saver-cancel';
 const HOSTNAME_WHITELIST = new Set(['claude.ai', 'chatgpt.com', 'chat.openai.com', 'gemini.google.com']);
 
@@ -26,6 +27,15 @@ chrome.runtime.onInstalled.addListener(() => {
 			contexts: ['page'],
 		});
 		chrome.contextMenus.create({
+			id: MENU_SAVE_PAGE,
+			title: 'Save page as Markdown',
+			// `page` on any host, not just the three supported ones. `activeTab`
+			// is granted per invocation, so this needs no standing access to every
+			// site the user visits -- which is the whole reason a generic page
+			// capture can exist without a `<all_urls>` permission.
+			contexts: ['page'],
+		});
+		chrome.contextMenus.create({
 			id: MENU_CANCEL,
 			title: 'Stop capturing',
 			contexts: ['page'],
@@ -39,8 +49,14 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
 		chrome.tabs.sendMessage(tab.id, { action: 'cancel' });
 		return;
 	}
-	if (info.menuItemId !== MENU_SAVE || !tab?.id) return;
-	await capture(tab.id, { behaviour: 'ask' });
+	if (!tab?.id) return;
+	if (info.menuItemId === MENU_SAVE) {
+		await capture(tab.id, { behaviour: 'ask' });
+		return;
+	}
+	if (info.menuItemId === MENU_SAVE_PAGE) {
+		await capturePage(tab.id);
+	}
 });
 
 chrome.commands.onCommand.addListener(async (command) => {
@@ -61,6 +77,41 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 	}
 	return undefined;
 });
+
+/** Saves whatever article the page holds. */
+async function capturePage(tabId) {
+	chrome.action.setBadgeText({ text: '…' });
+	try {
+		const response = await sendToTab(tabId, { action: 'extractPage' });
+		if (!response?.supported) {
+			throw new ExtractionError('This page could not be read. Try reloading it.', { recoverable: true });
+		}
+		if (!response.page) {
+			throw new ExtractionError(response.reason ?? 'No article was found on this page.', { recoverable: false });
+		}
+
+		const result = await saveConversation(chrome.runtime, {
+			conversation: {
+				title: response.page.title,
+				source: 'web',
+				model: null,
+				url: null,
+				// `format: 'html'` tells the app to convert, so the structural
+				// converter stays in Swift with its tests rather than being
+				// reimplemented in JavaScript.
+				turns: [{ role: 'assistant', body: response.page.html, format: 'html' }],
+			},
+			confidence: response.page.confidence,
+			behaviour: 'ask',
+		});
+
+		await notify(tabId, summarise(result, response.page.confidence));
+	} catch (error) {
+		await notify(tabId, { ok: false, message: error?.message ?? 'The capture failed.' });
+	} finally {
+		chrome.action.setBadgeText({ text: '' });
+	}
+}
 
 // MARK: - Capture
 

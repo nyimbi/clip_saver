@@ -46,7 +46,18 @@ enum ConversationRenderer {
             parts.append(renderToolCall(call))
         }
 
-        let body = turn.body.trimmingCharacters(in: .whitespacesAndNewlines)
+        // An HTML body is converted here rather than in the browser, so the
+        // structural converter stays in one place with its 64 tests behind it.
+        // A conversion that fails leaves the raw HTML visible rather than an
+        // empty turn, which would read as a message with no content.
+        let body: String
+        switch turn.format {
+        case .markdown:
+            body = turn.body.trimmingCharacters(in: .whitespacesAndNewlines)
+        case .html:
+            body = (HTMLToMarkdown.convert(turn.body) ?? turn.body)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
         if !body.isEmpty {
             parts.append(body)
         }
