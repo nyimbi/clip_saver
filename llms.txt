@@ -46,8 +46,11 @@ The services provider and save pipeline.
     the services while the provider process is running, and nothing else
     launches a Services-only app, so without a login item the tool is invisible
     after every reboot.
-  - `run(_:userData:error:)` — "Save Clipboard to File", from the Services menu
-    of any app. Destination is the Desktop.
+  - `saveToDesktop(_:userData:error:)` — "Save Clipboard to File", for the
+    Services menu of any app. Destination is the Desktop. **Not offered on a
+    stock macOS** — see the platform-restriction note below. Renamed from `run`
+    purely for clarity and to avoid overlapping `NSApplication.run()`; the name
+    was *not* the reason it fails to appear.
   - `saveToFolder(_:userData:error:)` — right-clicked folder(s) or file(s).
     Reads file URLs from the service pasteboard; the clipboard *content* comes
     from `NSPasteboard.general`.
@@ -282,6 +285,25 @@ One change was made and reverted after testing: collapsing `saveToFolder` and
 cleanup, but Finder supplies no file URL on a background right-click, so
 `saveToFolder` is not offered there and removing `saveHere` removed the only way
 to save into the current folder.
+
+## Platform restriction on the Services-menu entry
+
+macOS only offers services from third-party apps in an application's Services
+menu when the providing bundle is allowlisted in
+`/System/Library/CoreServices/com.apple.NSServicesRestrictions.plist`
+(`NSUnrestricted`). That file is SIP-protected system state holding 58 Apple
+bundle ids. `datacraft.Clipboard-saver` is not among them and an app cannot add
+itself.
+
+Verified on this machine: TextEdit's Services menu lists `Activity Monitor`,
+`File Activity`, `Allocations & Leaks` and `System Trace` — all from
+`com.apple.dt.Instruments`, which *is* allowlisted — and does not list
+"Save Clipboard to File". It is also absent from Finder's context menu. The two
+Finder-scoped services, which declare `NSRequiredContext` = `com.apple.finder`,
+are offered in Finder regardless.
+
+The declaration is kept because it is harmless and would work where the app is
+allowlisted, but it must not be presented as a working entry point.
 
 ## Known limitations
 

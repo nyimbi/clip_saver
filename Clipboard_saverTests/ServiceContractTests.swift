@@ -117,7 +117,7 @@ final class ServiceContractTests: XCTestCase {
     /// The Services menu entry has to offer the rich representations, or
     /// "Save Clipboard to File" can only ever write plain text.
     func testRunServiceAcceptsRichRepresentations() throws {
-        let run = try XCTUnwrap(services.first { ($0["NSMessage"] as? String) == "run" })
+        let run = try XCTUnwrap(services.first { ($0["NSMessage"] as? String) == "saveToDesktop" })
         let types = run["NSSendTypes"] as? [String] ?? []
         XCTAssertTrue(types.contains("NSStringPboardType"), "plain text must be accepted")
         XCTAssertTrue(types.contains("public.html"), "HTML must be accepted or conversion never runs")

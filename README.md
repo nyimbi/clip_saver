@@ -40,12 +40,18 @@ The first launch registers the app as a login item. **This step matters** — se
 
 ## Use
 
+The Finder context menu is the supported way to use this app. All three of
+these are verified working:
+
 | Where you click | Menu item | Destination |
 |---|---|---|
 | Background of a Finder window | Save Clipboard as Markdown Here | The folder shown in that window |
 | A folder, or several | Save Clipboard as Markdown | Inside each selected folder |
 | A file | Save Clipboard as Markdown | Alongside the file |
-| Services ▸ in any app | Save Clipboard to File | Desktop |
+
+A fourth service, **Save Clipboard to File** (saves to the Desktop), is declared
+and its code path is correct, but **a stock macOS never offers it** — see
+[Known limitations](#known-limitations).
 
 The two Finder items are not duplicates. A background right-click puts no file
 URL on the pasteboard, so the folder service is not offered there at all; the
@@ -205,6 +211,17 @@ because each one is invisible in code review:
 - **The app sandbox is disabled.** Writing to arbitrary folders and sending
   AppleEvents to Finder both require it, and there is no useful sandbox profile
   for a file-writing utility.
+- **"Save Clipboard to File" is not offered on a stock macOS.** The service is
+  declared and correct, but macOS only surfaces services from third-party apps
+  in an application's Services menu if they appear in
+  `/System/Library/CoreServices/com.apple.NSServicesRestrictions.plist`. That
+  list is SIP-protected system state containing 58 allowlisted Apple bundles;
+  `datacraft.Clipboard-saver` is not among them and cannot be added by the app.
+  Confirmed empirically: the entry is absent from TextEdit's Services menu
+  while allowlisted services (`Activity Monitor`, `File Activity`, …) are
+  present, and it is absent from the Finder context menu too. It is kept
+  because it costs nothing and works wherever the app is allowlisted, but it
+  should not be relied on. The Finder context menu is the working path.
 - **`saveToFolder` has not been isolated in a GUI run.** It is exercised by unit
   tests and appears in the real context menu, but the right-click-a-folder case
   was not driven end to end. The background (`saveHere`) path was.

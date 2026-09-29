@@ -55,7 +55,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Services
 
     /// "Save Clipboard to File" — the Services menu of any application.
-    @objc func run(_ pasteboard: NSPasteboard, userData: String, error: AutoreleasingUnsafeMutablePointer<NSString>) {
+    ///
+    /// The selector is deliberately not called `run`: that collides with
+    /// `NSApplication.run()`, and a service whose message shares a name with a
+    /// framework method is not offered in the Services menu at all.
+    @objc func saveToDesktop(_ pasteboard: NSPasteboard, userData: String, error: AutoreleasingUnsafeMutablePointer<NSString>) {
         guard let desktop = desktopDirectory() else {
             return finish(.failed("Could not locate the Desktop directory."), reveal: false, error)
         }
