@@ -42,7 +42,10 @@ enum RTFToMarkdown {
 
         var blocks: [String] = []
         var separators: [String] = []
-        var previousWasList = false
+        // Identity of the list the previous item belonged to, so a nested
+        // bullet, a following ordered list and a sibling of either are told
+        // apart. Anything else is a new block and needs a blank line.
+        var previousListKey: String?
         var codeBuffer: [String] = []
         var tableBuffer: [[String]] = []
 
@@ -59,15 +62,16 @@ enum RTFToMarkdown {
             tableBuffer = []
         }
 
-        func append(_ block: String, isList: Bool) {
+        func append(_ block: String, isList: Bool, listKey: String? = nil) {
             guard !blocks.isEmpty else {
                 blocks.append(block)
-                previousWasList = isList
+                previousListKey = listKey
                 return
             }
-            separators.append(isList && previousWasList ? "\n" : "\n\n")
+            let tight = isList && listKey != nil && listKey == previousListKey
+            separators.append(tight ? "\n" : "\n\n")
             blocks.append(block)
-            previousWasList = isList
+            previousListKey = listKey
         }
 
         for line in lines {
@@ -86,7 +90,9 @@ enum RTFToMarkdown {
                 flushTable()
                 flushCode()
                 let prefix = String(repeating: "  ", count: indent) + marker + " "
-                append(prefix + text, isList: true)
+                // `marker` is "-" for a bullet and "1." for an ordered item;
+                // the separating space is added in `prefix`, not here.
+                append(prefix + text, isList: true, listKey: "list|\(indent)|\(marker == "-" ? "u" : "o")")
             case .quote:
                 flushTable()
                 flushCode()
@@ -210,15 +216,18 @@ enum RTFToMarkdown {
 
         if let level = headingSizes[line.size], line.isBold { return .heading(level) }
 
-        if line.firstLineHeadIndent > 24, line.headIndent > 24 { return .quote }
-
         // `NSAttributedString` pads list bullets with tabs, so the marker has
         // to be found after the leading whitespace rather than at position 0.
-        // This is checked before the table path because a tab-indented bullet
-        // also contains tabs.
+        //
+        // This is checked before the quote and table paths. A nested bullet is
+        // both indented and tab-prefixed, so checking indentation first turned
+        // every sub-item into a block quote, and the table check would have
+        // claimed it too.
         if let bullet = bullet(line) {
             return .list(indent: bullet.indent, marker: bullet.marker, body: bullet.body)
         }
+
+        if line.firstLineHeadIndent > 24, line.headIndent > 24 { return .quote }
 
         // Anything else with several tab-separated columns is table-shaped.
         // Sheets and Numbers put one row per line.

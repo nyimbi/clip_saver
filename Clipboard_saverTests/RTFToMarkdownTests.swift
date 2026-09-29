@@ -108,6 +108,36 @@ final class RTFToMarkdownTests: XCTestCase {
         )
     }
 
+    /// Regression: an indented bullet is both indented and tab-prefixed, so
+    /// checking indentation first classified every sub-item as a block quote.
+    func testIndentedBulletIsANestedListItemNotAQuote() {
+        let style = NSMutableParagraphStyle()
+        style.firstLineHeadIndent = 36
+        style.headIndent = 36
+
+        let item = NSMutableAttributedString(
+            string: "\u{2022} Nested",
+            attributes: [.font: body, .paragraphStyle: style]
+        )
+        let block = convert([("Nested item", body)]) + "\n" + (RTFToMarkdown.convert(item) ?? "")
+        XCTAssertTrue(block.contains("- Nested"), "got: \(block.debugDescription)")
+        XCTAssertFalse(block.contains("> "), "an indented bullet must not become a quote")
+    }
+
+    /// A nested bullet followed by an ordered list needs a blank line, or the
+    /// two lists run together as one.
+    func testListTypeChangeGetsABlankLine() {
+        let markdown = convert([("\t1\tFirst", body), ("\t2\tSecond", body), ("\t\u{2022}\tBullet", body)])
+        XCTAssertEqual(markdown, "1. First\n2. Second\n\n- Bullet")
+    }
+
+    func testSiblingsOfTheSameListStayTight() {
+        XCTAssertEqual(
+            convert([("\t\u{2022}\tOne", body), ("\t\u{2022}\tTwo", body)]),
+            "- One\n- Two"
+        )
+    }
+
     func testEmptyInputReturnsNil() {
         XCTAssertNil(RTFToMarkdown.convert(NSAttributedString(string: "   ")))
     }

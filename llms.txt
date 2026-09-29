@@ -23,7 +23,7 @@ panel).
 ## Build and test
 
 - `xcodebuild -project Clipboard_saver.xcodeproj -scheme Clipboard_saver -destination 'platform=macOS' test`
-- Current status: **150 tests, 0 failures** (147 unit, 3 UI). Clean Release build with zero
+- Current status: **153 tests, 0 failures** (150 unit, 3 UI). Clean Release build with zero
   warnings from project sources (the single warning emitted is from Xcode's
   `appintentsmetadataprocessor` toolchain step).
 - Target: macOS 15.5+, Swift 5 language mode, bundle id `datacraft.Clipboard-saver`.
@@ -155,6 +155,9 @@ the style run.
   (a three-column row).
 - `renderTable(_:)` — column count is the *mode* of cell counts across the
   block. The previous divisor search could not tell a 2×3 table from a 3×2 one.
+- List items carry a key of `list|<depth>|<u|o>`; consecutive items join with a
+  single newline only when the key matches, so a nested bullet followed by an
+  ordered list gets a blank line instead of running together.
 
 ### `Clipboard_saver/FilenameGenerator.swift` (159 lines)
 
@@ -233,7 +236,7 @@ sanitised but not shortened to the readability limit.
 Representation precedence against synthetic multi-type pasteboards, plus the
 Markdown-detection table.
 
-### `Clipboard_saverTests/RTFToMarkdownTests.swift` (10 tests)
+### `Clipboard_saverTests/RTFToMarkdownTests.swift` (13 tests)
 
 Body prose is not a heading, large bold text is, monospace fences, tab-prefixed
 bullets, ordered bullets, indented block quotes, tab-delimited tables, ragged

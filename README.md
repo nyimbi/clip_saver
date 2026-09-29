@@ -124,7 +124,7 @@ xcodebuild -project Clipboard_saver.xcodeproj \
            -destination 'platform=macOS' test
 ```
 
-**150 tests, 0 failures** (147 unit, 3 UI).
+**153 tests, 0 failures** (150 unit, 3 UI).
 
 | Suite | Tests | Covers |
 |---|--:|---|
@@ -133,7 +133,7 @@ xcodebuild -project Clipboard_saver.xcodeproj \
 | `SavePipelineTests` | 18 | Pasteboard → file on disk, destination resolution, failures |
 | `ServiceContractTests` | 13 | `Info.plist` ↔ selector contract |
 | `ChosenFilenameTests` | 17 | The name confirmed in the save panel |
-| `RTFToMarkdownTests` | 10 | Style-based conversion |
+| `RTFToMarkdownTests` | 13 | Style-based conversion |
 | `MarkdownExporterTests` | 10 | Representation choice, Markdown detection |
 | UI tests | 3 | Launch smoke test (Xcode template) |
 
@@ -245,7 +245,7 @@ Clipboard_saver/
   FilenameGenerator.swift      Heading → safe unique filename
   Info.plist                   NSServices declarations, bundle identity
   Clipboard_saver.entitlements Sandbox off
-Clipboard_saverTests/          147 unit tests
+Clipboard_saverTests/          150 unit tests
 Clipboard_saverUITests/        Launch smoke test
 ```
 
