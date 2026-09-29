@@ -264,6 +264,7 @@ Clipboard_saverTests/          150 unit tests
 Clipboard_saverUITests/        Launch smoke test
 scripts/test.sh                Runs the suite and fails on a vacuous pass
 scripts/make-icon.swift        Regenerates the icon artwork
+LICENSE                        Apache 2.0
 ```
 
 The project uses Xcode 16 synchronized folder groups, so a new `.swift` file
@@ -272,4 +273,18 @@ build without editing `project.pbxproj`.
 
 ## Licence
 
-Not specified. Add one before publishing.
+Apache License 2.0. The full text is in [`LICENSE`](LICENSE).
+
+    Copyright 2025-2026 Nyimbi Odero
+
+    Licensed under the Apache License, Version 2.0 (the "License");
+    you may not use this file except in compliance with the License.
+    You may obtain a copy of the License at
+
+        https://www.apache.org/licenses/LICENSE-2.0
+
+    Unless required by applicable law or agreed to in writing, software
+    distributed under the License is distributed on an "AS IS" BASIS,
+    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+    See the License for the specific language governing permissions and
+    limitations under the License.

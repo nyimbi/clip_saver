@@ -351,7 +351,14 @@ allowlisted, but it must not be presented as a working entry point.
 - The `NSFilenamesPboardType` fallback branch is defensive and untestable —
   that pasteboard type cannot be synthesised.
 - The UI test target asserts nothing meaningful.
-- No licence file.
+
+## Licence
+
+- Apache License 2.0. `LICENSE` holds the verbatim upstream text with no
+  edits — the appendix placeholder is left as published, since that block is
+  the licence's own application template rather than part of the terms.
+- Copyright holder: Nyimbi Odero, 2025-2026, matching the sole commit author
+  across the history and the first-commit date of 2025-07-26.
 
 ## Assets
 
