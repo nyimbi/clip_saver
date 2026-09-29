@@ -49,13 +49,16 @@ func serve() {
 }
 
 func respond(to payload: Data, handler: BridgeHandler) -> Data {
-    guard let request = try? NativeMessage.decode(payload, as: BridgeRequest.self) else {
+    do {
+        let request = try NativeMessage.decode(payload, as: BridgeRequest.self)
+        return encode(handler.handle(request))
+    } catch {
         // The id is recovered from the raw JSON so the extension can still match
-        // the failure to its request rather than seeing a dead port.
+        // the failure to its request rather than seeing a dead port, and the
+        // decoding error travels with it so the message can name the field.
         let id = (try? JSONSerialization.jsonObject(with: payload) as? [String: Any])??["id"] as? String ?? "unknown"
-        return encode(handler.handleUndecodable(payload, id: id))
+        return encode(handler.handleUndecodable(payload, id: id, underlying: error))
     }
-    return encode(handler.handle(request))
 }
 
 func encode(_ response: BridgeResponse) -> Data {

@@ -78,11 +78,33 @@ enum NativeMessage {
     }
 
     static func frame(json: some Encodable) throws -> Data {
-        frame(try JSONEncoder().encode(json))
+        frame(try encoder().encode(json))
     }
 
     /// Decodes a payload as JSON.
     static func decode<T: Decodable>(_ payload: Data, as type: T.Type) throws -> T {
-        try JSONDecoder().decode(type, from: payload)
+        try decoder().decode(type, from: payload)
+    }
+
+    /// ISO-8601 on the wire.
+    ///
+    /// Swift's default is a Double of seconds since 2001, which is unambiguous to
+    /// Swift and to nobody else. A JavaScript sender reading that has to know the
+    /// reference date to subtract it, and a human reading a captured payload has
+    /// to recognise it at all. ISO-8601 costs a few bytes and is the one format
+    /// both sides already parse.
+    ///
+    /// There are no deployed senders, so this is free to fix now and expensive to
+    /// fix after a store release.
+    static func encoder() -> JSONEncoder {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        return encoder
+    }
+
+    static func decoder() -> JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return decoder
     }
 }

@@ -1,4 +1,5 @@
 import { describeIncomplete, harvestInfinite, harvestWindowed } from './harvest.js';
+import { readAttachments, readReasoning, readToolCalls, readTurnBody } from './adapters.js';
 
 /**
  * Saves the conversation, driving the harvest and handing the result to the app.
@@ -244,8 +245,15 @@ function extractFromNodes(doc, url, adapter, nodes) {
 		if (stableKey) matchedKey += 1;
 		turns.push({
 			role: mapped,
-			body: readTurnText(node, adapter.strip),
+			body: readTurnBody(node, adapter.strip),
 			key: stableKey ?? `selection:${index}`,
+			// Read through the same readers the full harvest uses. A selection
+			// that silently dropped reasoning, tool calls and attachments would
+			// save a file that looks complete and is not, which is worse than
+			// one that visibly lacks them.
+			reasoning: readReasoning(node),
+			toolCalls: readToolCalls(node),
+			attachments: readAttachments(node),
 		});
 	});
 
@@ -260,6 +268,10 @@ function extractFromNodes(doc, url, adapter, nodes) {
 			source: adapter.id,
 			model: null,
 			url: url.href,
+			// ISO-8601, because that is what the app's decoder is configured for.
+			// Swift's default would be a Double of seconds since 2001, which a
+			// sender has to know the reference date to read.
+			extractedAt: new Date().toISOString(),
 			turns: turns.map(({ key, ...rest }) => rest),
 			keys: turns.map((t) => t.key),
 			order: turns.map((_, i) => i),
@@ -287,17 +299,6 @@ function readRole(node, adapter) {
 	} catch {
 		return null;
 	}
-}
-
-function readTurnText(node, strip) {
-	const clone = node.cloneNode(true);
-	for (const selector of strip ?? []) {
-		for (const element of Array.from(clone.querySelectorAll(selector))) element.remove();
-	}
-	return (clone.textContent ?? '')
-		.replace(/\u00a0/g, ' ')
-		.replace(/[ \t]+\n/g, '\n')
-		.trim();
 }
 
 function valueAttributeIn(selector) {

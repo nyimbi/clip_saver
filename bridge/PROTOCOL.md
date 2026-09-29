@@ -131,3 +131,28 @@ The app makes no network connections. The extension's permission set is
 inspectable by the user, and that is the whole of the privacy story — it has to
 be verifiable rather than promised, because the data is a complete record of
 someone's private conversations with an AI.
+
+
+## Dates
+
+Timestamps are **ISO-8601 strings** in UTC, e.g. `2026-01-01T12:00:00Z`.
+
+This is not Swift's default. `JSONEncoder` writes a `Date` as a `Double` of
+seconds since the 2001 reference date, which is unambiguous to Swift and to
+nothing else: a sender has to know the reference date in order to subtract it,
+and a person reading a captured payload has to recognise it at all.
+
+`conversation.extractedAt` is the one timestamp on the wire. It is optional in
+the sense that a sender may omit it, and the app then records the moment of
+receipt -- refusing to save a whole conversation over a field the user never
+sees is the wrong trade.
+
+`attachments[].kind` is **also optional**, and senders should send `null`
+rather than guessing. The table mapping a file extension to a kind lives in the
+app, where it has to be right; a second copy in the extension would be one more
+thing to drift.
+
+`attachments[].byteSize` is an exact byte count, not a formatted string. A
+human-readable size cannot survive a round trip -- 12400 bytes renders as
+"12 KB" and reads back as 12000, so the saved file would differ from what was
+written and every re-save would look like a hand edit.

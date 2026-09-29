@@ -148,10 +148,11 @@ export function defineAdapter({
 				// enough to dedupe across one.
 				turns.push({
 					role: mapped,
-					body: readTurn(node, this.strip),
+					body: readTurnBody(node, this.strip),
 					key: stableKey ?? `index:${index}`,
 					reasoning: readReasoning(node),
 					toolCalls: readToolCalls(node),
+					attachments: readAttachments(node),
 				});
 			});
 
@@ -269,14 +270,43 @@ function valueAttributeIn(selector) {
 }
 
 /** Text of one turn, with chrome removed. */
-function readTurn(node, strip) {
+/**
+ * Containers that hold an attachment rather than prose.
+ *
+ * These are removed from the body, not just read. A card is chrome: leaving its
+ * text in means the saved file lists "chart.png" as an attachment and then says
+ * "chart.png" again in the message, plus whatever placeholder glyphs the card
+ * used while loading. The attachment list is the record.
+ *
+ * Note this is the *same* list the attachment reader looks for. If the two drift,
+ * a file starts duplicating itself.
+ */
+export const ATTACHMENT_CHROME = [
+	'[data-file-name]',
+	'[data-testid*="attachment" i]',
+	'[class*="attachment" i]',
+	'[class*="file-chip" i]',
+	'[class*="fileCard" i]',
+];
+
+/**
+ * The body of a turn, without the interface around it.
+ *
+ * One implementation, shared by the full harvest and the selection path. They
+ * used to have separate copies of this, which is how the selection path came to
+ * drop reasoning, tool calls and attachments while the harvest kept them.
+ */
+export function readTurnBody(node, strip) {
 	const clone = node.cloneNode(true);
-	for (const selector of strip) {
+	for (const selector of [...(strip ?? []), ...ATTACHMENT_CHROME]) {
 		for (const element of Array.from(clone.querySelectorAll(selector))) {
 			element.remove();
 		}
 	}
-	return (clone.textContent ?? '').replace(/\u00a0/g, ' ').replace(/[ \t]+\n/g, '\n').trim();
+	return (clone.textContent ?? '')
+		.replace(/\u00a0/g, ' ')
+		.replace(/[ \t]+\n/g, '\n')
+		.trim();
 }
 
 /**
@@ -288,7 +318,7 @@ function readTurn(node, strip) {
  * reasoning field that reads as mangled when it is quoted back in an
  * exported transcript.
  */
-function readReasoning(node) {
+export function readReasoning(node) {
 	const element = node.querySelector?.('details, [data-testid*="thinking" i], [class*="thinking" i]');
 	if (!element) return null;
 
@@ -308,7 +338,85 @@ function readReasoning(node) {
 	return text.length >= 20 ? text : null;
 }
 
-function readToolCalls(node) {
+/**
+ * Files a turn references.
+ *
+ * Recorded as references, never fetched. Fetching would mean a network request
+ * for a file the user did not ask us to download, and the app makes none by
+ * design. What survives is the part that carries meaning: the name, the kind,
+ * the size and where the page said it was.
+ */
+export function readAttachments(node) {
+	const found = new Map();
+
+	const record = (raw, size, url) => {
+		const name = filename(raw);
+		if (!name) return;
+		// Deduped by name: a thumbnail and the full image on the same card are
+		// one attachment from the reader's point of view.
+		if (!found.has(name)) {
+			// `kind` stays null on purpose. The table that maps an extension to a
+			// kind lives in the app, which is the only place it has to be right;
+			// a second copy here would be one more thing to drift.
+			found.set(name, { name, kind: null, byteSize: size ?? null, url: url || null, inline: false });
+		}
+	};
+
+	// A chip or card naming a file.
+	for (const element of node.querySelectorAll?.('[data-testid*="attachment" i], [class*="attachment" i], [data-file-name]') ?? []) {
+		const name = element.getAttribute('data-file-name') ?? element.textContent?.trim() ?? '';
+		const href = element.querySelector?.('a')?.getAttribute('href') ?? element.getAttribute('href') ?? null;
+		record(name.split(/\s+/)[0], parseSize(element.textContent ?? ''), href);
+	}
+
+	// A generated image. Recorded from the element rather than from its text,
+	// because here the evidence is the DOM itself: the source is a data: or
+	// blob: URL, so the file is already in the page and there is nothing to
+	// download.
+	//
+	// The kind is set from that same evidence rather than left to the extension
+	// table, since an image has no filename to look at. The alt text is a
+	// label, not a name, so it is not required to look like one.
+	for (const image of node.querySelectorAll?.('img[src]') ?? []) {
+		const source = image.getAttribute('src') ?? '';
+		if (!source.startsWith('data:') && !source.startsWith('blob:')) continue;
+		const label = (image.getAttribute('alt') || '').trim();
+		const name = label || 'generated image';
+		if (!found.has(name)) {
+			found.set(name, { name, kind: 'image', byteSize: null, url: null, inline: true });
+		}
+	}
+
+	return [...found.values()];
+}
+
+/**
+ * The first token of a chip's text, if it actually looks like a filename.
+ *
+ * Attachment containers are also used for layout: a "• • •" placeholder, a
+ * spinner, a "+ Add file" button. Recording those would fill the file with
+ * phantom attachments, so a name has to carry an extension to be believed.
+ */
+function filename(raw) {
+	const token = (raw ?? '').trim().split(/\s+/)[0] ?? '';
+	if (!token) return null;
+	const match = /^([^/\\?#]+)\.([A-Za-z0-9]{1,8})$/.exec(token);
+	if (!match) return null;
+	// "3.14" and "v1.2" are numbers, not filenames.
+	if (/^\d+$/.test(match[1].replace(/[._-]/g, ''))) return null;
+	return token;
+}
+
+function parseSize(text) {
+	const match = /(\d[\d.,]*)\s?([KMG]?B)/i.exec(text ?? '');
+	if (!match) return null;
+	const value = parseFloat(match[1].replace(/,/g, ''));
+	if (Number.isNaN(value)) return null;
+	const scale = { b: 1, kb: 1e3, mb: 1e6, gb: 1e9 }[match[2].toLowerCase()] ?? 1;
+	return Math.round(value * scale);
+}
+
+export function readToolCalls(node) {
 	const calls = [];
 	for (const element of node.querySelectorAll?.('[data-testid*="tool" i], [class*="tool-call" i]') ?? []) {
 		const name = element.getAttribute?.('data-tool') ?? element.getAttribute?.('data-testid');

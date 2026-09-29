@@ -43,4 +43,39 @@ if [ "$TOTAL" -lt "$MIN_TESTS" ]; then
 	exit 1
 fi
 
+# The bridge.
+#
+# This used to be Swift only, which is how three separate defects reached `main`
+# with every test green: a hand-maintained source list in the host build script
+# drifted by seven files and the binary stopped compiling; the extension never
+# sent a field the model required, so every real save was refused; and the
+# selection path dropped a third of each turn. None of them is visible from one
+# language, so a gate that runs one language cannot see any of them.
+if [ "${BRIDGE:-1}" = "1" ]; then
+	command -v node >/dev/null || { echo "node is required for the bridge tests" >&2; exit 1; }
+	[ -d bridge/node_modules ] || {
+		echo "bridge/node_modules is missing -- run: (cd bridge && npm install)" >&2
+		exit 1
+	}
+
+	echo "--- bridge unit tests"
+	(cd bridge && node --test test/)
+
+	echo "--- host build"
+	# Built, not just tested: a stale or unbuildable host passes every unit test
+	# in the repository.
+	./bridge/host/build.sh "${DERIVED}/clipboard-saver-host" >"$DERIVED/host-build.log" 2>&1 || {
+		rg -n "error:" "$DERIVED/host-build.log" | head -20 || true
+		echo "host build failed; full log: $DERIVED/host-build.log" >&2
+		exit 1
+	}
+
+	echo "--- end to end"
+	# Extension source -> native framing -> compiled host -> the saved file.
+	# The payload comes out of the real extractor, so this cannot drift from what
+	# the extension actually sends.
+	mkdir -p "$DERIVED/e2e"
+	(cd bridge && node e2e-host.mjs "$DERIVED/clipboard-saver-host" "$DERIVED/e2e")
+fi
+
 echo "ok"

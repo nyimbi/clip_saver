@@ -164,6 +164,60 @@ sockets; the extension's full permission set is inspectable.
 | 2 — protocol, host, extension, adapters, harvester | done, except store submission |
 | 3 — store submission | needs your accounts |
 
+## Added after the plan was written
+
+None of these were in the original twenty, and each one cost more in edge cases
+than the feature it delivered.
+
+- **Daily notes and destination presets** — a note appended in place, a preset
+  resolved to a folder, with a delimited section so a second save updates rather
+  than duplicates.
+- **KaTeX and MathJax recovery** — an expression that survives the round trip is
+  worth more than one that renders nicely once and is unreadable in the file.
+- **Selection-scoped capture** — save two messages out of forty, not forty out of
+  two.
+- **Generic page capture** — a chat has role markers and an article does not, so
+  the hard part inverted: deciding which of ten thousand elements is the content.
+  Scored on text density, paragraph count and link density, and a low score
+  produces a file that says so rather than a confident capture of a sitemap.
+- **Attachment references** — recorded, never fetched. The app makes no network
+  connections by design, and that is the reason the archive is worth keeping.
+
+## What the tests could not see
+
+Three defects reached `main` with every test in the repository green, and all
+three had the same cause: a boundary with nothing crossing it.
+
+1. `bridge/host/build.sh` kept a hand-written list of app sources. Seven files
+   were added to the app over time and never added to it, so the host stopped
+   compiling the moment the renderer began using `HTMLToMarkdown`. Nothing
+   caught it because the Xcode project globs the directory, the Swift tests build
+   through Xcode, and only the build script read the stale copy.
+2. The extension never sent `conversation.extractedAt`, which the model required.
+   Every real save was refused with "could not read the request". The Swift tests
+   construct a `BridgeRequest` in Swift; the JavaScript tests never see Swift.
+3. The selection path built turns without the shared readers, so selecting a
+   message silently dropped its reasoning, tool calls and attachments. The saved
+   file looked complete and was not.
+
+The refusals were also uninformative: a version mismatch, a renamed field and a
+type change all produced the same sentence. The message now names the field.
+
+`scripts/test.sh` runs the bridge unit tests, builds the host, and drives the
+whole path end to end -- extension source, native framing, compiled host, saved
+file -- with the payload coming out of the real extractor so it cannot drift from
+what the extension sends. A second save is asserted to be a no-op.
+
+## Known limits
+
+- **Extensions do not record the source of a capture.** Chat providers do not
+  disclose it, and a guessed model name in frontmatter is worse than none.
+- **`saveToDesktop` needs a bundle ID in the services allowlist.** Not available
+  to a stock macOS app. `saveToFolder` is unaffected.
+- **Adapters rot.** Selectors are pinned to three providers and verified against
+  saved pages, not live ones; see below.
+- **Attachments are references, not copies.** By design, not by omission.
+
 Verified: 389 Swift tests, 60 extension tests, 0 failures. The host is exercised
 over a real pipe, and the harvester against 300 randomised configurations.
 

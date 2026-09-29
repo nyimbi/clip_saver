@@ -128,7 +128,7 @@ struct BridgeHandler {
     /// unexpected error occurred", which tells the user nothing about which half
     /// needs updating. The id is recovered from the raw JSON where possible so
     /// the extension can still match the failure to its request.
-    func handleUndecodable(_ payload: Data, id fallbackID: String) -> BridgeResponse {
+    func handleUndecodable(_ payload: Data, id fallbackID: String, underlying: Error? = nil) -> BridgeResponse {
         let recovered = (try? JSONSerialization.jsonObject(with: payload) as? [String: Any])??["id"] as? String
         return BridgeResponse(
             version: Self.currentVersion,
@@ -138,10 +138,42 @@ struct BridgeHandler {
             search: nil,
             error: .init(
                 code: .malformedRequest,
-                message: "This app could not read the request. It may come from a newer version of the extension.",
+                message: Self.malformedMessage(underlying),
                 recoverable: false
             )
         )
+    }
+
+    /// Says which field was wrong, not just that something was.
+    ///
+    /// A single opaque "could not read the request" covers a version mismatch,
+    /// a renamed field and a type change, which are three unrelated bugs with
+    /// three unrelated fixes. The cost of the longer message is a few bytes in
+    /// an error the user sees once, when something is already wrong.
+    static func malformedMessage(_ error: Error?) -> String {
+        guard let error else {
+            return "This app could not read the request. It may come from a newer version of the extension."
+        }
+        if let decoding = error as? DecodingError {
+            switch decoding {
+            case let .keyNotFound(key, context):
+                return "The request is missing \"\(key.stringValue)\" (at \(path(context))). It may come from a newer version of the extension."
+            case let .typeMismatch(type, context):
+                return "The field at \(path(context)) should be \(type) but is not."
+            case let .valueNotFound(type, context):
+                return "The field at \(path(context)) is null but should be \(type)."
+            case let .dataCorrupted(context):
+                return "The request is not readable at \(path(context))."
+            @unknown default:
+                break
+            }
+        }
+        return "This app could not read the request: \(error)"
+    }
+
+    private static func path(_ context: DecodingError.Context) -> String {
+        let components = context.codingPath.map(\.stringValue)
+        return components.isEmpty ? "the top level" : components.joined(separator: ".")
     }
 
     private func validate(_ request: BridgeRequest) throws {

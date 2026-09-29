@@ -63,6 +63,31 @@ panel even if that means replacing a file — subsequent directories are
 collision-resolved so a multi-folder save can never silently destroy a second
 file.
 
+## What the browser extension saves
+
+Right-click a page. The menu adapts to what is there:
+
+| Where you click | Menu item | Result |
+|---|---|---|
+| An AI chat, or several messages in one | Save Conversation | The whole thread, scrolled to the top first |
+| A selection across messages | Save Selected Messages | Only the messages you highlighted |
+| Any article | Save Page as Markdown | The article, with the surrounding page stripped |
+
+A chat is the easy case: messages carry role markers, so the hard part is
+knowing what a selector means. An article is the mirror image: no markers at all,
+so the hard part is deciding which of ten thousand elements is the content. Each
+candidate region is scored on text density, paragraph count and link density --
+kept separate, so a page that genuinely *is* a list of articles is not discarded
+for having links -- and class and id hints subtract weakly to break ties, because
+plenty of real content lives in an element called `story-body`. A low score
+produces a file that says it is a low-confidence capture, rather than a confident
+file full of navigation and cookie banners.
+
+Attachments are recorded as references, never downloaded. The app makes no
+network connections by design, and that is the reason the archive is worth
+keeping; a name, a kind, a size and a URL survive, and a file with no URL says so
+rather than implying a download that will 404.
+
 ## How the clipboard is interpreted
 
 The app takes the richest representation available on the pasteboard:
@@ -122,7 +147,32 @@ testable in-process.
 ./scripts/test.sh
 ```
 
-**153 tests, 0 failures** (150 unit, 3 UI).
+**462 Swift tests, 100 bridge tests, 0 failures**, plus a compiled-host
+end-to-end run.
+
+The bridge is in the same script on purpose. Three defects reached `main` with
+every test green, and all three lived on a boundary that nothing crossed:
+
+- `bridge/host/build.sh` held a hand-written list of app sources. Seven files
+  were added to the app over time and never added to it, so the host stopped
+  compiling once the renderer started using `HTMLToMarkdown`. The Xcode project
+  globs the directory and the Swift tests build through Xcode, so only the build
+  script read the stale copy — and nothing built the host.
+- The extension never sent `conversation.extractedAt`, which the model required.
+  Every real save was refused. The Swift tests build a `BridgeRequest` in Swift;
+  the JavaScript tests never see Swift.
+- The selection path built turns without the shared readers, so selecting a
+  message silently dropped its reasoning, tool calls and attachments.
+
+`scripts/test.sh` now runs the bridge unit tests, builds the host, and drives the
+whole path — extension source, native framing, compiled host, the saved file —
+with the payload coming out of the real extractor, so it cannot drift from what
+the extension actually sends. A second save is asserted to change nothing. Set
+`BRIDGE=0` to skip it when node is unavailable.
+
+`cd bridge && node verify-page.html <saved.html> <conversation-url>` runs the
+real adapters against a page you saved from a signed-in session, which is the
+only way to check a selector without a browser.
 
 The wrapper is not decoration. The scheme is shared and committed at
 `Clipboard_saver.xcodeproj/xcshareddata/xcschemes/Clipboard_saver.xcscheme`
@@ -135,6 +185,7 @@ floor (default 150).
 
 | Suite | Tests | Covers |
 |---|--:|---|
+| `BridgeAttachmentTests` | 2 | The exact payload the extension sends, decoded as the host decodes it |
 | `HTMLToMarkdownTests` | 64 | Structure preservation, escaping, hostile input, throughput |
 | `FilenameGeneratorTests` | 15 | Title extraction, sanitising, collisions |
 | `SavePipelineTests` | 18 | Pasteboard → file on disk, destination resolution, failures |
@@ -142,7 +193,9 @@ floor (default 150).
 | `ChosenFilenameTests` | 17 | The name confirmed in the save panel |
 | `RTFToMarkdownTests` | 13 | Style-based conversion |
 | `MarkdownExporterTests` | 10 | Representation choice, Markdown detection |
-| UI tests | 3 | Launch smoke test (Xcode template) |
+| `AttachmentTests` | 16 | Reference rendering, exact sizes, hostile filenames, the wire |
+| `ConversationModelTests` | 24 | Absent fields, format, sanitising |
+| UI tests | 2 | The agent launches, stays up, and quits -- twice |
 
 `ServiceContractTests` deserves a note. macOS dispatches a service by looking up
 its `NSMessage` string on the services-provider object, and enumerates the menu

@@ -16,23 +16,39 @@ REPO="$PWD"
 APP="$REPO/Clipboard_saver"
 OUT="${1:-$REPO/bridge/host/build/clipboard-saver-host}"
 
-SOURCES=(
-	"$APP/Conversation.swift"
-	"$APP/Frontmatter.swift"
-	"$APP/Fingerprint.swift"
-	"$APP/ConversationRenderer.swift"
-	"$APP/IncrementalSave.swift"
-	"$APP/NativeMessage.swift"
-	"$APP/BridgeHandler.swift"
-	"$APP/ConversationSaver.swift"
-	"$APP/SQLiteDatabase.swift"
-	"$APP/ArchiveStore.swift"
-	"$APP/ArchiveIndexer.swift"
-	"$APP/ContentTagger.swift"
-	"$APP/SearchService.swift"
-	"$APP/FilenameGenerator.swift"
-	"$REPO/bridge/host/main.swift"
-)
+# Every app source except the SwiftUI entry point.
+#
+# This list used to be written out by hand, and it drifted: seven files were
+# added to the app over time and never added here, so the host stopped
+# compiling entirely the moment the renderer started using HTMLToMarkdown.
+#
+# Nothing caught it. The Xcode project uses a synchronized folder group, so it
+# globs the directory and always built; and the Swift tests build through Xcode
+# too. Only `build.sh` was reading a stale copy, and only a real host build
+# exercised it -- so the binary that talks to the browser was broken while every
+# test in the repository passed.
+#
+# Deriving the list means a new file is included by existing rather than by
+# remembering.
+EXCLUDED=(Clipboard_saverApp.swift)
+
+SOURCES=()
+for source in "$APP"/*.swift; do
+	name="$(basename "$source")"
+	skip=0
+	for excluded in "${EXCLUDED[@]}"; do
+		[ "$name" = "$excluded" ] && skip=1
+	done
+	[ "$skip" -eq 1 ] && continue
+	SOURCES+=("$source")
+done
+SOURCES+=("$REPO/bridge/host/main.swift")
+
+# A source list that silently shrinks is how the last drift stayed invisible.
+if [ "${#SOURCES[@]}" -lt 16 ]; then
+	echo "only ${#SOURCES[@]} sources found; expected the whole app directory" >&2
+	exit 1
+fi
 
 for source in "${SOURCES[@]}"; do
 	if [ ! -f "$source" ]; then

@@ -7,35 +7,63 @@
 
 import XCTest
 
+/// Launch tests.
+///
+/// The app is an `LSUIElement` agent: it has no window, no menu bar item, and
+/// nothing to tap. So there is no UI to drive, and the honest question is the
+/// only one available -- does it launch, and does it stay up.
+///
+/// There is deliberately no `measure` block here. The Xcode template ships one,
+/// and it fails the suite often enough to matter ("Received unexpected number of
+/// metrics: 0") while passing in isolation, because the metric is dropped when
+/// other tests have run first. It asserts nothing about this app, and a test
+/// that needs a re-run before it will pass trains everyone to re-run before they
+/// believe a failure. The performance claim in the README is measured on the
+/// conversion path instead, where the number is reproducible.
 final class Clipboard_saverUITests: XCTestCase {
 
     override func setUpWithError() throws {
-        // Put setup code here. This method is called before the invocation of each test method in the class.
-
-        // In UI tests it is usually best to stop immediately when a failure occurs.
+        // A launch that fails partway leaves nothing to assert against.
         continueAfterFailure = false
-
-        // In UI tests it’s important to set the initial state - such as interface orientation - required for your tests before they run. The setUp method is a good place to do this.
     }
 
-    override func tearDownWithError() throws {
-        // Put teardown code here. This method is called after the invocation of each test method in the class.
+    /// Whether the agent is up.
+    ///
+    /// `runningBackground` counts, and is in fact what an `LSUIElement` app with
+    /// no windows reports. Asserting `runningForeground` here would be asserting
+    /// that the app has a window it is specifically built not to have.
+    private func isUp(_ app: XCUIApplication) -> Bool {
+        app.state == .runningForeground || app.state == .runningBackground
     }
 
+    /// The agent starts, stays running, and exits cleanly on quit.
+    ///
+    /// `terminate()` is the assertion. An agent that registers its Services
+    /// provider and then crashes on launch still "launches", and the only way to
+    /// find out is to ask it to stop and watch whether it actually does.
     @MainActor
-    func testExample() throws {
-        // UI tests must launch the application that they test.
+    func testTheAgentLaunchesAndStaysUp() throws {
         let app = XCUIApplication()
         app.launch()
 
-        // Use XCTAssert and related functions to verify your tests produce the correct results.
+        XCTAssertTrue(isUp(app), "the agent did not stay up after launch: \(app.state.rawValue)")
+
+        app.terminate()
+        XCTAssertFalse(isUp(app), "the agent ignored quit")
     }
 
+    /// A second launch must work.
+    ///
+    /// Services apps are relaunched constantly -- once per invocation from the
+    /// Finder -- so a first launch that works and a second that does not would
+    /// make the app usable exactly once per login.
     @MainActor
-    func testLaunchPerformance() throws {
-        // This measures how long it takes to launch your application.
-        measure(metrics: [XCTApplicationLaunchMetric()]) {
-            XCUIApplication().launch()
+    func testTheAgentRelaunches() throws {
+        for attempt in 1...2 {
+            let app = XCUIApplication()
+            app.launch()
+            XCTAssertTrue(isUp(app), "launch \(attempt) of 2 failed: \(app.state.rawValue)")
+            app.terminate()
         }
     }
 }
