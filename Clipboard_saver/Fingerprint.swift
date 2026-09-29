@@ -24,20 +24,7 @@ enum Fingerprint {
     /// The canonical form hashed. Exposed because the archive stores the
     /// prefix to detect near-duplicates without a full comparison.
     static func canonical(_ conversation: Conversation) -> String {
-        var out = conversation.source.rawValue
-        out += "\u{1F}" + conversation.model.orEmpty
-        for turn in conversation.turns {
-            out += "\u{1E}"
-            out += turn.role.rawValue
-            out += "\u{1F}" + normalise(turn.body)
-            if let reasoning = turn.reasoning, !reasoning.isEmpty {
-                out += "\u{1F}reasoning:" + normalise(reasoning)
-            }
-            for call in turn.toolCalls {
-                out += "\u{1F}tool:" + call.name + ":" + normalise(call.input.orEmpty)
-            }
-        }
-        return out
+        canonical(source: conversation.source, model: conversation.model, turns: conversation.turns)
     }
 
     /// Whitespace-insensitive, but not content-insensitive.
@@ -57,6 +44,35 @@ enum Fingerprint {
             }
             .filter { !$0.isEmpty }
             .joined(separator: "\n")
+    }
+
+    /// The canonical form for a source, model and turns, without needing a whole
+    /// `Conversation`.
+    ///
+    /// A file read back from disk is not a `Conversation` — it is frontmatter
+    /// fields plus parsed turns — so comparing fingerprints between an incoming
+    /// capture and an existing file means building the canonical string from
+    /// those parts on both sides. Doing it this way rather than reconstructing a
+    /// `Conversation` keeps the two paths from drifting apart.
+    static func canonical(
+        source: ConversationSource,
+        model: String?,
+        turns: [Turn]
+    ) -> String {
+        var out = source.rawValue
+        out += "\u{1F}" + (model ?? "")
+        for turn in turns {
+            out += "\u{1E}"
+            out += turn.role.rawValue
+            out += "\u{1F}" + normalise(turn.body)
+            if let reasoning = turn.reasoning, !reasoning.isEmpty {
+                out += "\u{1F}reasoning:" + normalise(reasoning)
+            }
+            for call in turn.toolCalls {
+                out += "\u{1F}tool:" + call.name + ":" + normalise(call.input ?? "")
+            }
+        }
+        return out
     }
 
     /// SHA-256 of the canonical form, hex-encoded.

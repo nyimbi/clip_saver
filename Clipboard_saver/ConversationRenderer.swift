@@ -215,6 +215,11 @@ enum ConversationRenderer {
     struct ParsedDocument {
         var turns: [Turn]
         var isIntact: Bool
+        /// From the file's own frontmatter. Needed to recompute a fingerprint
+        /// comparable to an incoming conversation's — a file read back from
+        /// disk is frontmatter plus turns, not a `Conversation`.
+        var source: ConversationSource
+        var model: String?
     }
 
     /// Recovers turns from a document this renderer wrote.
@@ -223,13 +228,20 @@ enum ConversationRenderer {
         let body = Frontmatter.stripping(document)
         let turns = splitTurns(from: body)
         let recorded = fields?[bodyHashKey]
+        let source = ConversationSource(identifier: fields?["platform"] ?? "")
+        let model = fields?["model"]
 
         // A file with no recorded hash predates this field, or was written by
         // another tool. Its turns are still parsed, but not trusted.
         guard let recorded, !recorded.isEmpty else {
-            return ParsedDocument(turns: turns, isIntact: false)
+            return ParsedDocument(turns: turns, isIntact: false, source: source, model: model)
         }
-        return ParsedDocument(turns: turns, isIntact: recorded == bodyHash(turns: turns))
+        return ParsedDocument(
+            turns: turns,
+            isIntact: recorded == bodyHash(turns: turns),
+            source: source,
+            model: model
+        )
     }
 
     /// Convenience for callers that do not care about verification. Only use

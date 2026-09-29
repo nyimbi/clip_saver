@@ -81,10 +81,38 @@ dumb; the structural work happens in Core.
 
 **2.3 Adapters** — one per platform, each returning a confidence score. A
 confidence drop below threshold is a loud failure, never a quiet short file.
+Adapters declare which scroll strategy their platform needs, because the two
+platform families behave oppositely (see 2.4).
 
-**2.4 Auto-scroll** — virtualised message lists mean the DOM holds only what is
-rendered. Scroll, harvest, dedupe, repeat. Stop-and-save at any point, with the
-truncation stated in the output.
+**2.4 Auto-scroll** — the hardest part, and the part every exporter gets wrong.
+
+Virtualised message lists mean the DOM holds only what is currently mounted.
+There are two distinct failure modes, requiring opposite strategies:
+
+- **Infinite scrollers** (Gemini). Old turns stay mounted as you scroll. Scroll
+  to the top once, wait for the count to stabilise, read it all. The subtlety is
+  that the load trigger is usually *edge-triggered* on a top-crossing event, so
+  a second pass from the top does nothing. It has to jump to the bottom first to
+  re-arm, then return to the top.
+- **Windowing** (Claude, ChatGPT). Off-screen turns are *evicted*. You cannot
+  scroll to the top and read everything; you must step upward, harvest each
+  window, and accumulate across them, deduplicating on a stable per-turn key.
+
+Three requirements, each learned by a competitor from a shipping bug:
+
+1. **Overlapping steps.** Step by 0.6 of clientHeight, not 1.0. A full-viewport
+   step leaves a turn straddling the boundary to fall between two harvests, and
+   it is lost silently. This is the single most important constant in the
+   feature.
+2. **Progress-aware deadlines, not a fixed wall.** Give up after 15s with *no
+   progress* (reset on every iteration that surfaces a new turn), plus an
+   absolute 5min cap. A fixed wall did not scale: at ~400ms per iteration it
+   capped accumulation around 75 turns, so any longer conversation timed out
+   mid-scroll. Background-tab timer throttling (≥1s, ~10s after 5min hidden)
+   makes any wall-clock budget unreliable anyway.
+3. **Stop-and-save with the truncation stated.** A timeout is not a failure, it
+   is a partial capture — and a partial capture must say so, in the file, per
+   feature 2.3.
 
 Gate: fixture-driven. Saved copies of real chat markup, committed, so adapter
 regressions are test failures rather than user bug reports.

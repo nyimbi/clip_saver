@@ -103,6 +103,25 @@ enum ConversationSource: RawRepresentable, Codable, Equatable, Hashable {
             return name.prefix(1).uppercased() + name.dropFirst()
         }
     }
+
+    /// Accepts either the slug or the display name.
+    ///
+    /// The frontmatter stores the display name, because that is what a person
+    /// reads in the file, so reading a file back has to resolve `"Claude"` to
+    /// `.claude`. A fingerprint computed from the display name would not match
+    /// one computed from the slug, and every re-save would look like a new
+    /// conversation.
+    init(identifier: String) {
+        let trimmed = identifier.trimmingCharacters(in: .whitespaces)
+        for known in [ConversationSource.chatgpt, .claude, .gemini, .perplexity, .copilot, .webPage] {
+            if known.rawValue.caseInsensitiveCompare(trimmed) == .orderedSame
+                || known.displayName.caseInsensitiveCompare(trimmed) == .orderedSame {
+                self = known
+                return
+            }
+        }
+        self = ConversationSource(rawValue: trimmed)
+    }
 }
 
 /// How an extraction went.
