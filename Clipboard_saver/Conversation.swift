@@ -40,6 +40,40 @@ struct Turn: Codable, Equatable, Hashable {
         self.reasoning = reasoning
         self.toolCalls = toolCalls
     }
+
+    /// Decoded explicitly rather than synthesised, because a default in an
+    /// initialiser does not make a property optional on the wire.
+    ///
+    /// The sender is JavaScript, which naturally omits empty fields, so a
+    /// synthesised decoder rejects a perfectly ordinary message for lacking
+    /// `toolCalls`. That surfaced as `malformedRequest` from a request that was
+    /// in fact well formed -- an unhelpful answer to a correct message, and one
+    /// that would have been blamed on the extension.
+    enum CodingKeys: String, CodingKey {
+        case role, body, timestamp, reasoning, toolCalls
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        role = try container.decode(TurnRole.self, forKey: .role)
+        body = try container.decode(String.self, forKey: .body)
+        timestamp = try container.decodeIfPresent(Date.self, forKey: .timestamp)
+        reasoning = try container.decodeIfPresent(String.self, forKey: .reasoning)
+        toolCalls = try container.decodeIfPresent([ToolCall].self, forKey: .toolCalls) ?? []
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(role, forKey: .role)
+        try container.encode(body, forKey: .body)
+        try container.encodeIfPresent(timestamp, forKey: .timestamp)
+        try container.encodeIfPresent(reasoning, forKey: .reasoning)
+        // Omitted when empty, so the payload stays small for the common case of a
+        // conversation with no tool calls at all.
+        if !toolCalls.isEmpty {
+            try container.encode(toolCalls, forKey: .toolCalls)
+        }
+    }
 }
 
 struct ToolCall: Codable, Equatable, Hashable {
@@ -154,6 +188,21 @@ struct ExtractionConfidence: Equatable, Codable {
         self.complete = complete
         self.strategy = strategy
         self.warnings = warnings
+    }
+
+    /// Same reasoning as `Turn`: the sender is JavaScript, so a missing `warnings`
+    /// array must not fail the decode.
+    enum CodingKeys: String, CodingKey {
+        case score, complete, strategy, warnings
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let raw = try container.decode(Double.self, forKey: .score)
+        score = min(max(raw, 0), 1)
+        complete = try container.decode(Bool.self, forKey: .complete)
+        strategy = try container.decode(ExtractionStrategy.self, forKey: .strategy)
+        warnings = try container.decodeIfPresent([String].self, forKey: .warnings) ?? []
     }
 
     /// Below this the extraction is not trusted to be complete.

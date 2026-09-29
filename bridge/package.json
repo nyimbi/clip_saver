@@ -1,0 +1,13 @@
+{
+	"name": "clipboard-saver-bridge",
+	"version": "1.0.0",
+	"private": true,
+	"type": "module",
+	"description": "Browser half of the Clipboard Saver bridge. The extension talks to the native app; all conversion and archiving happens there.",
+	"scripts": {
+		"test": "node --test test/"
+	},
+	"devDependencies": {
+		"jsdom": "^25.0.0"
+	}
+}

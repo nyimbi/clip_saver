@@ -1,0 +1,18 @@
+<!doctype html>
+<!--
+  A page whose layout no longer matches the adapter. This is the fixture that
+  matters most: a site changes its DOM, the selectors stop matching, and the
+  adapter has to say so rather than return an empty conversation that the app
+  would happily write to disk as a complete capture.
+-->
+<html lang="en">
+<head><meta charset="utf-8"><title>Some Redesigned Page - Claude</title></head>
+<body>
+	<main>
+		<div class="new-layout-v3">
+			<article class="turn turn--human"><p>Everything here is new.</p></article>
+			<article class="turn turn--model"><p>So none of the old selectors match.</p></article>
+		</div>
+	</main>
+</body>
+</html>

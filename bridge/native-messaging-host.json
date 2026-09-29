@@ -1,0 +1,9 @@
+{
+	"name": "datacraft.Clipboard_saver",
+	"description": "Sends captured conversations to the Clipboard Saver app, which converts them to Markdown, merges them with any existing copy, and indexes them for search.",
+	"path": "PLACEHOLDER_PATH",
+	"type": "stdio",
+	"allowed_origins": [
+		"PLACEHOLDER_ORIGIN"
+	]
+}

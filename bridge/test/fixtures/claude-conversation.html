@@ -1,0 +1,51 @@
+<!doctype html>
+<!--
+  A captured Claude conversation, in the shape the adapter expects.
+
+  Hand-written from the structure the adapter documents, NOT copied from a live
+  page. It is a fixture for the adapter's *contract*, not proof that the adapter
+  matches Anthropic's current DOM -- only a real saved page does that, and a
+  fixture written from a guess would encode the guess and then verify it.
+
+  What it does verify: role mapping, stable keys, turn ordering, title
+  extraction, and the confidence reported when keys or roles are missing.
+-->
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<title>Structured concurrency in Swift - Claude</title>
+</head>
+<body>
+	<main>
+		<h1>Structured concurrency in Swift</h1>
+
+		<div data-testid="user-message" data-message-id="m1">
+			<p>How do I run two async calls concurrently?</p>
+		</div>
+
+		<div data-testid="assistant-message" data-message-id="m2">
+			<p>Use a task group when you need all results:</p>
+			<pre><code class="language-swift">await withTaskGroup(of: Int.self) { group in
+	for i in 1...3 { group.addTask { await work(i) } }
+}</code></pre>
+			<table>
+				<thead><tr><th>Approach</th><th>Waits for</th></tr></thead>
+				<tbody><tr><td>async let</td><td>a fixed set</td></tr></tbody>
+			</table>
+			<button data-testid="copy-button">Copy</button>
+		</div>
+
+		<div data-testid="user-message" data-message-id="m3">
+			<p>What happens if one throws?</p>
+		</div>
+
+		<div data-testid="assistant-message" data-message-id="m4">
+			<details>
+				<summary>Thinking</summary>
+				<p>Task groups propagate the first error and cancel the rest.</p>
+			</details>
+			<p>The first thrown error propagates; the remaining child tasks are cancelled.</p>
+		</div>
+	</main>
+</body>
+</html>

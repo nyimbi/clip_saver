@@ -1,0 +1,45 @@
+{
+	"manifest_version": 3,
+	"name": "Clipboard Saver",
+	"version": "1.0.0",
+	"description": "Save an AI conversation or a web page to Markdown, through the Clipboard Saver app.",
+
+	"permissions": ["activeTab", "contextMenus", "nativeMessaging", "storage", "scripting"],
+
+	"host_permissions": [
+		"https://claude.ai/*",
+		"https://chatgpt.com/*",
+		"https://chat.openai.com/*",
+		"https://gemini.google.com/*"
+	],
+
+	"background": {
+		"service_worker": "background.js",
+		"type": "module"
+	},
+
+	"action": {
+		"default_title": "Clipboard Saver"
+	},
+
+	"content_scripts": [
+		{
+			"matches": [
+				"https://claude.ai/*",
+				"https://chatgpt.com/*",
+				"https://chat.openai.com/*",
+				"https://gemini.google.com/*"
+			],
+			"js": ["content.js"],
+			"run_at": "document_idle",
+			"all_frames": false
+		}
+	],
+
+	"commands": {
+		"save-conversation": {
+			"suggested_key": { "default": "Command+Shift+S" },
+			"description": "Save the current conversation as Markdown"
+		}
+	}
+}

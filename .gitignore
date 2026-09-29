@@ -16,3 +16,8 @@ Archives/
 
 # The local zvec-grep workspace index
 .zvec-grep/
+
+# Node, for the browser extension in bridge/. `package-lock.json` is deliberately
+# not ignored: the extension has no dependencies at runtime and the lock file is
+# what makes the jsdom test dependency auditable.
+bridge/node_modules/

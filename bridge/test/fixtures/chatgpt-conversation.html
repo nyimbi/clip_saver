@@ -1,0 +1,36 @@
+<!doctype html>
+<!--
+  A ChatGPT conversation, plus a message whose role is not in the roleMap and
+  one with no id. Both exist to exercise the confidence path: a fixture where
+  every message is clean would never show what the adapter reports when a site
+  changes shape.
+-->
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<title>Borrow checker error - ChatGPT</title>
+</head>
+<body>
+	<main>
+		<h1>Borrow checker error</h1>
+
+		<div data-message-author-role="user" data-message-id="c1">
+			<p>Why does the borrow checker reject this?</p>
+		</div>
+
+		<div data-message-author-role="assistant" data-message-id="c2">
+			<p>The mutable borrow outlives the immutable one:</p>
+			<pre><code class="language-rust">let r = &amp;mut v;
+let a = &amp;v;</code></pre>
+		</div>
+
+		<div data-message-author-role="assistant" data-message-id="c3">
+			<p>NLL ends the immutable borrow at its last use, so this would be fine.</p>
+		</div>
+
+		<div data-message-author-role="assistant">
+			<p>A turn with no message id at all.</p>
+		</div>
+	</main>
+</body>
+</html>
