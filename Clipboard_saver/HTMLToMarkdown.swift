@@ -208,7 +208,14 @@ enum HTMLToMarkdown {
                 continue
             }
 
-            if ignoredElements.contains(name) {
+            // A `script` holding a TeX source is not script: it is the formula,
+            // and skipping it as an ignored element discards the only recoverable
+            // copy. Everything else of that tag is still skipped.
+            let isMathScript = name == "script"
+                && MathExpression.isSourceElement(tag: name, encoding: nil, type: tag.attributes["type"])
+                && (tag.attributes["type"]?.lowercased().contains("math/tex") ?? false)
+
+            if ignoredElements.contains(name), !isMathScript {
                 flushText()
                 if !tag.selfClosing, !voidElements.contains(name) {
                     skippingTag = name
@@ -886,6 +893,10 @@ enum HTMLToMarkdown {
             return escapeInline(normalize(raw))
 
         case .element(let element):
+            // Mathematics is handled before the generic dispatch, because the
+            // generic path reaches the glyph layers and emits them as prose.
+            if let math = mathLiteral(element) { return math }
+
             switch element.name {
             case "br":
                 return "\\\n"
@@ -1084,6 +1095,72 @@ enum HTMLToMarkdown {
             out.append(character)
         }
         return out
+    }
+
+    /// Renders a maths element, or returns nil when it is not one.
+    ///
+    /// Two cases, and the order matters:
+    ///
+    ///   - An element that *is* the source (KaTeX's `<annotation>`, MathJax's
+    ///     `<script type="math/tex">`) yields the wrapped source directly.
+    ///   - A container yields the source found inside it, and nothing at all when
+    ///     there is none. Emitting the container's own text is what produced
+    ///     `E=mc2E = mc^2...`: the glyph layers, the source, and the glyphs
+    ///     again.
+    static func mathLiteral(_ element: Element) -> String? {
+        let tag = element.name.lowercased()
+        let className = element.attributes["class"]
+        let encoding = element.attributes["encoding"]
+        let type = element.attributes["type"]
+
+        if MathExpression.isSourceElement(tag: tag, encoding: encoding, type: type) {
+            guard let source = firstMathSource(in: element) else { return nil }
+            return MathExpression.wrap(source, form: MathExpression.form(tag: tag, className: className))
+        }
+
+        guard MathExpression.isMathContainer(tag: tag, className: className, display: element.attributes["display"]) else {
+            return nil
+        }
+
+        guard let source = firstMathSource(in: element) else {
+            // A container with no source carries only drawn glyphs, which is not
+            // text. Emitting nothing is the honest result.
+            return ""
+        }
+        let form = MathExpression.isDisplay(className: className) || tag == "math"
+            ? .display
+            : MathExpression.form(tag: tag, className: className)
+        return MathExpression.wrap(source, form: form)
+    }
+
+    /// The first source element at or below `element`, preferring an explicit
+    /// TeX annotation over anything incidental.
+    static func firstMathSource(in element: Element) -> String? {
+        if MathExpression.isSourceElement(
+            tag: element.name.lowercased(),
+            encoding: element.attributes["encoding"],
+            type: element.attributes["type"]
+        ) {
+            return directText(of: element)
+        }
+        // A container: look for a source element below it, and take the first.
+        // Deliberately not "the first text found" -- a `<mrow>` inside
+        // `<mathml>` is full of single-character text nodes, and taking the
+        // first of those recovers `E` instead of `E = mc^2`.
+        for child in element.children {
+            guard case .element(let child) = child else { continue }
+            if let source = firstMathSource(in: child) { return source }
+        }
+        return nil
+    }
+
+    /// The immediate text of an element, ignoring any child elements.
+    static func directText(of element: Element) -> String? {
+        let text = element.children.compactMap { node -> String? in
+            if case .text(let raw) = node { return raw }
+            return nil
+        }.joined()
+        return text.isEmpty ? nil : text
     }
 
     /// Escapes a leading character that would otherwise turn the line into
