@@ -145,7 +145,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// Shows a save panel seeded with `suggested` in `directory`. Returns the
-    /// sanitised name, or `nil` when the user cancels.
+    /// filename to use, or `nil` only when the user cancels.
     private func askForFilename(suggesting suggested: String, in directory: URL) -> String? {
         let panel = NSSavePanel()
         panel.canCreateDirectories = true
@@ -157,20 +157,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.message = "Choose a name for the clipboard contents."
 
         guard panel.runModal() == .OK else { return nil }
-
         // The user may type anything, including a path separator, so the name
-        // is sanitised again. An extension is restored when the field is left
-        // without one, and a new extension the user typed is respected.
-        let typed = panel.nameFieldStringValue
+        // is sanitised again before it reaches the file system.
+        return Self.resolveTypedFilename(panel.nameFieldStringValue, fallback: suggested)
+    }
+
+    /// Turns whatever the user typed into a legal filename.
+    ///
+    /// The name field accepts anything, so illegal characters are removed. A
+    /// missing extension is restored from the suggestion, and an extension the
+    /// user typed is respected.
+    ///
+    /// A name made entirely of illegal characters sanitises to nothing. That
+    /// used to be reported as a cancellation, which meant pressing Save did
+    /// nothing at all with no explanation; it now falls back to the suggestion
+    /// so a save is never silently dropped. The only `nil` here is a
+    /// suggestion that is itself unusable.
+    static func resolveTypedFilename(_ typed: String, fallback suggested: String) -> String? {
+        let cleaned = typed
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .sanitizedForTypedFilename
-        guard !typed.isEmpty else { return nil }
+        // The suggestion is sanitised too, so neither path can produce a name
+        // made only of illegal characters.
+        let candidate = cleaned.isEmpty
+            ? suggested.sanitizedForTypedFilename
+            : cleaned
+        guard !candidate.isEmpty else { return nil }
 
-        let fallback = (suggested as NSString).pathExtension
-        let extensionName = (typed as NSString).pathExtension.isEmpty ? fallback : (typed as NSString).pathExtension
-        let stem = (typed as NSString).deletingPathExtension
+        let extensionName = (candidate as NSString).pathExtension
+        let stem = (candidate as NSString).deletingPathExtension
         guard !stem.isEmpty else { return nil }
-        return extensionName.isEmpty ? stem : "\(stem).\(extensionName)"
+        guard extensionName.isEmpty else { return candidate }
+
+        let fallbackExtension = (suggested as NSString).pathExtension
+        return fallbackExtension.isEmpty ? stem : "\(stem).\(fallbackExtension)"
     }
 
     // MARK: - Pipeline
@@ -257,29 +277,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// directly; a selected file contributes its parent, so right-clicking a
     /// document drops the new file alongside it.
     func destinationFolders(from pasteboard: NSPasteboard) -> [URL] {
-        var urls: [URL] = []
-
         let modern = pasteboard.readObjects(
             forClasses: [NSURL.self],
             options: [NSPasteboard.ReadingOptionKey.urlReadingFileURLsOnly: true]
         ) as? [URL] ?? []
 
+        let urls: [URL]
         if !modern.isEmpty {
             urls = modern
-        } else if let paths = pasteboard.propertyList(
-            forType: NSPasteboard.PasteboardType("NSFilenamesPboardType")
-        ) as? [String] {
-            // Fallback for writers that predate `public.file-url`. The type
-            // cannot be synthesised, so this branch has no direct test.
-            urls = paths.map { URL(fileURLWithPath: $0) }
+        } else {
+            // Fallback for writers that predate `public.file-url`.
+            urls = Self.urls(fromLegacyPathList: pasteboard.propertyList(
+                forType: NSPasteboard.PasteboardType("NSFilenamesPboardType")
+            ))
         }
+        return Self.folders(for: urls)
+    }
 
+    /// `NSFilenamesPboardType` carries an array of POSIX paths, but a
+    /// misbehaving writer can put anything in there. Only non-blank strings
+    /// are taken — filtering element by element rather than casting the whole
+    /// array, so one bad entry does not discard the paths around it.
+    ///
+    /// The pasteboard type itself cannot be synthesised, so this is where the
+    /// legacy branch gets its coverage: the parsing is separated from the
+    /// acquisition so the parsing can be tested.
+    static func urls(fromLegacyPathList propertyList: Any?) -> [URL] {
+        guard let entries = propertyList as? [Any] else { return [] }
+        return entries
+            .compactMap { $0 as? String }
+            .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+            .map { URL(fileURLWithPath: $0) }
+    }
+
+    /// Resolves selected items to the folders a save should land in, dropping
+    /// duplicates. Selecting a file and its parent folder must not write twice.
+    static func folders(for urls: [URL]) -> [URL] {
         var seen = Set<String>()
         return urls.compactMap { url in
             var isDirectory: ObjCBool = false
             let folder = FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory)
                 && isDirectory.boolValue ? url : url.deletingLastPathComponent()
-            // Selecting a file and its parent folder must not write twice.
             return seen.insert(folder.standardizedFileURL.path).inserted ? folder : nil
         }
     }

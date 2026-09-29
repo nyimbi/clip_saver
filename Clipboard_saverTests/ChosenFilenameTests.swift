@@ -102,6 +102,43 @@ final class ChosenFilenameTests: XCTestCase {
         XCTAssertLessThanOrEqual(typed.sanitizedForTypedFilename.utf8.count, FilenameGenerator.byteLimit)
     }
 
+    // MARK: - Resolving what the user typed
+
+    func testTypedNameKeepsItsOwnExtension() {
+        XCTAssertEqual(AppDelegate.resolveTypedFilename("Report.txt", fallback: "Notes.md"), "Report.txt")
+    }
+
+    func testMissingExtensionIsRestoredFromTheSuggestion() {
+        XCTAssertEqual(AppDelegate.resolveTypedFilename("Report", fallback: "Notes.md"), "Report.md")
+    }
+
+    /// Regression: a name made only of illegal characters used to be reported
+    /// as a cancellation, so pressing Save did nothing with no explanation.
+    func testNameOfOnlyIllegalCharactersFallsBackToTheSuggestion() {
+        XCTAssertEqual(AppDelegate.resolveTypedFilename("///", fallback: "Notes.md"), "Notes.md")
+        XCTAssertEqual(AppDelegate.resolveTypedFilename(":::", fallback: "Notes.md"), "Notes.md")
+        XCTAssertEqual(AppDelegate.resolveTypedFilename("   ", fallback: "Notes.md"), "Notes.md")
+        XCTAssertEqual(AppDelegate.resolveTypedFilename("", fallback: "Notes.md"), "Notes.md")
+    }
+
+    func testPartiallyIllegalNameKeepsWhatIsLegal() {
+        XCTAssertEqual(AppDelegate.resolveTypedFilename("a/b:c", fallback: "Notes.md"), "a b c.md")
+    }
+
+    func testSuggestionWithoutAnExtensionIsUsedAsIs() {
+        XCTAssertEqual(AppDelegate.resolveTypedFilename("Report", fallback: "Notes"), "Report")
+    }
+
+    /// Only a suggestion that is itself unusable yields nothing.
+    func testUnusableSuggestionYieldsNothing() {
+        XCTAssertNil(AppDelegate.resolveTypedFilename("///", fallback: "///"))
+    }
+
+    /// A perfectly good typed name does not care what the suggestion was.
+    func testTypedNameIsUsedEvenWhenTheSuggestionIsUnusable() {
+        XCTAssertEqual(AppDelegate.resolveTypedFilename("Report", fallback: "///"), "Report")
+    }
+
     func testGeneratedNamesStillUseTheReadabilityLimit() {
         let generated = String(repeating: "word ", count: 40)
         XCTAssertLessThanOrEqual(

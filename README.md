@@ -118,15 +118,15 @@ xcodebuild -project Clipboard_saver.xcodeproj \
            -destination 'platform=macOS' test
 ```
 
-**126 tests, 0 failures** (123 unit, 3 UI).
+**137 tests, 0 failures** (134 unit, 3 UI).
 
 | Suite | Tests | Covers |
 |---|--:|---|
 | `HTMLToMarkdownTests` | 52 | Structure preservation, escaping, hostile input, throughput |
 | `FilenameGeneratorTests` | 15 | Title extraction, sanitising, collisions |
-| `SavePipelineTests` | 14 | Pasteboard → file on disk, destination resolution, failures |
+| `SavePipelineTests` | 18 | Pasteboard → file on disk, destination resolution, failures |
 | `ServiceContractTests` | 13 | `Info.plist` ↔ selector contract |
-| `ChosenFilenameTests` | 10 | The name confirmed in the save panel |
+| `ChosenFilenameTests` | 17 | The name confirmed in the save panel |
 | `RTFToMarkdownTests` | 10 | Style-based conversion |
 | `MarkdownExporterTests` | 9 | Representation choice, Markdown detection |
 | UI tests | 3 | Launch smoke test (Xcode template) |
@@ -170,6 +170,13 @@ hostile input. Two classes of bug were found and fixed by fuzzing it:
 - **Silent content loss on a truncated pasteboard.** An unterminated attribute
   quote made the rest of the document an attribute value, losing the entire
   body. The parser now rewinds and salvages the text.
+- **A save silently dropped when the typed name was all illegal characters.**
+  Typing `///` into the save panel and pressing Save sanitised to nothing, which
+  was reported as a cancellation — so nothing happened and nothing was said. It
+  now falls back to the suggested name.
+- **One malformed entry discarded an entire legacy pasteboard list.** The
+  fallback read `NSFilenamesPboardType` with an `as? [String]` cast, so a single
+  non-string element threw away every path. It now filters element by element.
 
 ## Why it silently did nothing
 
@@ -221,7 +228,7 @@ Clipboard_saver/
   FilenameGenerator.swift      Heading → safe unique filename
   Info.plist                   NSServices declarations, bundle identity
   Clipboard_saver.entitlements Sandbox off
-Clipboard_saverTests/          123 unit tests
+Clipboard_saverTests/          134 unit tests
 Clipboard_saverUITests/        Launch smoke test
 ```
 

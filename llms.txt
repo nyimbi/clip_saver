@@ -23,7 +23,7 @@ panel).
 ## Build and test
 
 - `xcodebuild -project Clipboard_saver.xcodeproj -scheme Clipboard_saver -destination 'platform=macOS' test`
-- Current status: **126 tests, 0 failures** (123 unit, 3 UI). Clean Release build with zero
+- Current status: **137 tests, 0 failures** (134 unit, 3 UI). Clean Release build with zero
   warnings from project sources (the single warning emitted is from Xcode's
   `appintentsmetadataprocessor` toolchain step).
 - Target: macOS 15.5+, Swift 5 language mode, bundle id `datacraft.Clipboard-saver`.
@@ -59,16 +59,22 @@ The services provider and save pipeline.
     purpose: the process terminates on return, so an async panel would be killed
     before the user answered it.
   - `askForFilename(suggesting:in:)` — `NSSavePanel.runModal()` seeded with the
-    derived name. The typed value is re-sanitised (the field accepts anything,
-    including path separators) and a missing extension is restored.
+    derived name.
+  - `static resolveTypedFilename(_:fallback:)` — turns the typed value into a
+    legal filename: illegal characters removed, a missing extension restored
+    from the suggestion, a typed extension respected, and an all-illegal name
+    falling back to the suggestion rather than being treated as a cancel.
   - `save(pasteboard:into:)` / `save(export:into:name:)` — the write path,
     returning `SaveOutcome` (`.written` / `.cancelled` / `.failed`) rather than
     terminating. This split is what makes the pipeline testable in-process.
   - `resolveDestinations(from:frontWindowFolder:)` — selection first, front
     Finder window as fallback.
-  - `destinationFolders(from:)` — a selected folder is used directly; a selected
-    file contributes its parent. De-duplicates. `public.file-url` first, then
-    the legacy `NSFilenamesPboardType`.
+  - `destinationFolders(from:)` — `public.file-url` first, then the legacy
+    `NSFilenamesPboardType` list.
+  - `static urls(fromLegacyPathList:)` — parses the legacy list, taking only
+    non-blank strings element by element.
+  - `static folders(for:)` — a selected folder resolves to itself, a selected
+    file to its parent, duplicates collapsed.
   - `finish(_:reveal:_:)` — a non-nil `error` pointer makes macOS show an
     alert; nil completes silently. Cancelling is not an error.
 
@@ -200,7 +206,7 @@ correct; exactly three services; every `NSMessage` resolves to a real
 service is unconstrained while the folder service requires a file selection;
 `NSAppleEventsUsageDescription` is present.
 
-### `Clipboard_saverTests/SavePipelineTests.swift` (14 tests)
+### `Clipboard_saverTests/SavePipelineTests.swift` (18 tests)
 
 Pasteboard → file on disk, extension selection, repeated saves not overwriting,
 one file per destination, empty/missing/non-directory destinations reported
@@ -213,7 +219,7 @@ Heading, trailing-hash, setext and first-line title extraction; illegal
 characters, newlines, control characters, leading dots, reserved names,
 word-boundary truncation, Unicode preservation; sequential collision suffixes.
 
-### `Clipboard_saverTests/ChosenFilenameTests.swift` (10 tests)
+### `Clipboard_saverTests/ChosenFilenameTests.swift` (17 tests)
 
 The name confirmed in the save panel is used verbatim; the first destination
 may replace, additional destinations are collision-resolved; typed names are
@@ -260,6 +266,16 @@ Plus two found by fuzzing the parser afterwards:
 
 5. **SIGSEGV on deep nesting** — recursive `Element` deallocation, capped at 256.
 6. **Content loss on a truncated pasteboard** — unterminated attribute quote.
+7. **A save silently dropped when the typed name was all illegal characters.**
+   `resolveTypedFilename` reported "no usable name" as a cancellation, so
+   pressing Save with `///` in the field did nothing and said nothing. Now falls
+   back to the suggestion. Extracted as a static function precisely so this
+   could be tested.
+8. **One malformed entry discarded a whole legacy pasteboard list.** The
+   `NSFilenamesPboardType` fallback used an `as? [String]` cast, so one
+   non-string element discarded every path. Now filtered element by element.
+   The parsing is separated from the acquisition, which is what makes this
+   branch testable at all — the type itself cannot be synthesised.
 
 One change was made and reverted after testing: collapsing `saveToFolder` and
 `saveHere` into a single service. It looked like a duplicate-menu-entry

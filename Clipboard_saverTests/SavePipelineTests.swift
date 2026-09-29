@@ -174,6 +174,35 @@ final class SavePipelineTests: XCTestCase {
         XCTAssertEqual(folders.map(\.standardizedFileURL.path), [nested.standardizedFileURL.path])
     }
 
+    // MARK: - Legacy pasteboard path list
+
+    /// The `NSFilenamesPboardType` acquisition cannot be synthesised, so the
+    /// parsing is separated from it and tested here instead.
+    func testLegacyPathListIsParsed() {
+        let urls = AppDelegate.urls(fromLegacyPathList: ["/tmp/a.md", "/tmp/b.md"])
+        XCTAssertEqual(urls.map(\.path), ["/tmp/a.md", "/tmp/b.md"])
+    }
+
+    func testLegacyPathListIgnoresNonStringsAndBlanks() {
+        XCTAssertTrue(AppDelegate.urls(fromLegacyPathList: [42, "", "  ", ["nested"]]).isEmpty)
+        let mixed = AppDelegate.urls(fromLegacyPathList: [7, "/tmp/ok.md", ""])
+        XCTAssertEqual(mixed.map(\.path), ["/tmp/ok.md"])
+    }
+
+    func testLegacyPathListAcceptsAnything() {
+        XCTAssertTrue(AppDelegate.urls(fromLegacyPathList: nil).isEmpty)
+        XCTAssertTrue(AppDelegate.urls(fromLegacyPathList: "a string").isEmpty)
+        XCTAssertTrue(AppDelegate.urls(fromLegacyPathList: ["a": 1]).isEmpty)
+    }
+
+    /// A file and its parent folder must resolve to one destination, not two.
+    func testDuplicateDestinationsAreCollapsed() throws {
+        let file = directory.appendingPathComponent("one.md")
+        try "x".write(to: file, atomically: true, encoding: .utf8)
+        let folders = AppDelegate.folders(for: [file, directory, file])
+        XCTAssertEqual(folders.map(\.standardizedFileURL.path), [directory.standardizedFileURL.path])
+    }
+
     func testNoSelectionAndNoWindowResolvesToNothing() {
         let board = NSPasteboard.withUniqueName()
         XCTAssertTrue(AppDelegate().resolveDestinations(from: board, frontWindowFolder: nil).isEmpty)
