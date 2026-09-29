@@ -22,13 +22,24 @@ panel).
 
 ## Build and test
 
-- `xcodebuild -project Clipboard_saver.xcodeproj -scheme Clipboard_saver -destination 'platform=macOS' test`
+- `./scripts/test.sh` — runs the suite and reads the executed count out of the
+  `.xcresult`, failing if it is zero or below `MIN_TESTS` (default 150).
+- Underlying command: `xcodebuild -project Clipboard_saver.xcodeproj -scheme Clipboard_saver
+  -destination 'platform=macOS' test`
 - Current status: **153 tests, 0 failures** (150 unit, 3 UI). Clean Release build with zero
   warnings from project sources (the single warning emitted is from Xcode's
   `appintentsmetadataprocessor` toolchain step).
+- The scheme is committed at `Clipboard_saver.xcodeproj/xcshareddata/xcschemes/Clipboard_saver.xcscheme`
+  with `Clipboard_saverTests` and `Clipboard_saverUITests` both wired in, `buildConfiguration = Debug`.
+  Previously no scheme was committed, Xcode auto-generated one listing only the UI
+  bundle, and `xcodebuild test` exited 0 after 4 tests. Unit tests are Debug-only:
+  `ENABLE_TESTABILITY` is `NO` in Release, so `@testable import Clipboard_saver`
+  fails to compile in Release.
 - Target: macOS 15.5+, Swift 5 language mode, bundle id `datacraft.Clipboard-saver`.
 - Deployment copies to `/Applications/Clipboard_saver.app`. It must be launched
-  once after install so it registers itself as a login item.
+  once after install so it registers itself as a login item. Replace the bundle
+  with `rm -rf` then `ditto` — a plain `cp -R` into an existing `.app` nests a
+  second bundle inside the first and silently leaves the stale one in place.
 
 ## Source files
 
@@ -339,6 +350,20 @@ allowlisted, but it must not be presented as a working entry point.
   `saveHere` path was.
 - The `NSFilenamesPboardType` fallback branch is defensive and untestable —
   that pasteboard type cannot be synthesised.
-- The app icon asset catalog is empty; Finder shows a generic icon.
 - The UI test target asserts nothing meaningful.
 - No licence file.
+
+## Assets
+
+- `Clipboard_saver/Assets.xcassets/AppIcon.appiconset` holds 10 PNGs: sizes
+  16/32/128/256/512 at 1x and 2x, all `idiom: mac`. Optical weight is keyed on
+  the *point* size, not the pixel count, so the two slots that share a pixel
+  count (`16@2x` and `32@1x` are both 32 px) rasterise differently. A
+  resolution-independent design that scales purely by pixel count makes those
+  two files byte-identical, which is what an earlier iteration did.
+- `actool` emits 10 `Icon Image` renditions into `Assets.car` (5 × 1x, 5 × 2x)
+  plus a `MultiSized Image` entry. The `AppIcon.icns` it writes alongside holds
+  only 4 representations (`ic04` 16, `ic11` 16@2x, `ic07` 128, `ic13` 128@2x).
+  That is actool's normal legacy fallback, not a truncation — verified by
+  rendering the installed bundle through `NSWorkspace` at 16/32/64/128/256/512,
+  all of which return real artwork.

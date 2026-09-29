@@ -119,12 +119,19 @@ testable in-process.
 ## Testing
 
 ```sh
-xcodebuild -project Clipboard_saver.xcodeproj \
-           -scheme Clipboard_saver \
-           -destination 'platform=macOS' test
+./scripts/test.sh
 ```
 
 **153 tests, 0 failures** (150 unit, 3 UI).
+
+The wrapper is not decoration. The scheme is shared and committed at
+`Clipboard_saver.xcodeproj/xcshareddata/xcschemes/Clipboard_saver.xcscheme`
+with both test targets wired in. Without it Xcode auto-generates a scheme that
+lists only the UI-test bundle, so `xcodebuild test` reports `** TEST SUCCEEDED **`
+after running **4** tests — a green result that silently excludes 150. The script
+reads the executed count out of the `.xcresult` and fails if it is zero or below a
+floor, so a vacuous pass cannot be mistaken for a pass. `MIN_TESTS` overrides the
+floor (default 150).
 
 | Suite | Tests | Covers |
 |---|--:|---|
@@ -186,7 +193,7 @@ hostile input. Two classes of bug were found and fixed by fuzzing it:
 
 ## Why it silently did nothing
 
-Four independent causes, none of which produced a build error. This is recorded
+Five independent causes, none of which produced a build error. This is recorded
 because each one is invisible in code review:
 
 1. **The bundle had no identity.** `GENERATE_INFOPLIST_FILE` is `NO` and the
@@ -203,11 +210,16 @@ because each one is invisible in code review:
    importer flattens the tag tree onto a handful of point sizes, so `<p>` was
    indistinguishable from `<h5>`, `<li>` arrived as `"\t•\tItem"`, and tables,
    links and blockquotes were lost entirely.
+5. **The test command lied.** The scheme was never committed, so Xcode
+   auto-generated one containing only the UI-test bundle. `xcodebuild test`
+   exited 0 having run 4 of 153 tests and printed `** TEST SUCCEEDED **`. The
+   suite could have been deleted and the build would still have reported green.
+   The unit tests are also Debug-only: `ENABLE_TESTABILITY` is `NO` in Release,
+   so the seven `@testable import Clipboard_saver` files fail to compile against
+   a Release build.
 
 ## Known limitations
 
-- **The app icon is empty.** `Assets.xcassets` has the scaffold but no artwork,
-  so Finder shows a generic icon. Cosmetic only — the app never shows a window.
 - **The app sandbox is disabled.** Writing to arbitrary folders and sending
   AppleEvents to Finder both require it, and there is no useful sandbox profile
   for a file-writing utility.
@@ -237,6 +249,7 @@ because each one is invisible in code review:
 
 ```
 Clipboard_saver.xcodeproj      Xcode project (objectVersion 77, synchronized folders)
+  xcshareddata/xcschemes/     Committed scheme — both test targets, Debug
 Clipboard_saver/
   Clipboard_saverApp.swift     Services entry points, save pipeline
   MarkdownExporter.swift       Representation choice
@@ -245,8 +258,11 @@ Clipboard_saver/
   FilenameGenerator.swift      Heading → safe unique filename
   Info.plist                   NSServices declarations, bundle identity
   Clipboard_saver.entitlements Sandbox off
+  Assets.xcassets/
+    AppIcon.appiconset         10 sizes, 1x and 2x, distinct per slot
 Clipboard_saverTests/          150 unit tests
 Clipboard_saverUITests/        Launch smoke test
+scripts/test.sh                Runs the suite and fails on a vacuous pass
 ```
 
 The project uses Xcode 16 synchronized folder groups, so a new `.swift` file
