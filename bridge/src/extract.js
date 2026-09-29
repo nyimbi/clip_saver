@@ -90,7 +90,22 @@ function findViewport(doc) {
  * @returns {Promise<{conversation: object, confidence: object}>}
  */
 export async function extractConversation(doc, location, adapter, options = {}) {
-	const { signal, onProgress } = options;
+	const { signal, onProgress, selection } = options;
+
+	// A selection skips the harvest entirely: the turns are already mounted,
+	// and scrolling to pull in messages the user did not select would be both
+	// slow and wrong.
+	if (selection) {
+		const scoped = extractSelection(doc, selection, adapter);
+		if (scoped) {
+			scoped.conversation.title = scoped.conversation.title
+				? `${scoped.conversation.title} (selection)`
+				: 'Selection';
+			return { conversation: scoped.conversation, confidence: scoped.confidence };
+		}
+		// A selection that touches nothing usable falls through to the whole
+		// conversation, which is the better of two imperfect answers.
+	}
 
 	if (!(await waitForMessages(adapter, doc))) {
 		throw new ExtractionError(
@@ -148,6 +163,147 @@ export async function extractConversation(doc, location, adapter, options = {}) 
 	};
 }
 
+
+/**
+ * Extracts only the turns a selection touches.
+ *
+ * This is the "save these three messages" case, and it is the most common
+ * actual intent: a thread is often two hundred turns long and the thing worth
+ * keeping is the exchange someone just highlighted.
+ *
+ * The subtlety is that a selection is a *range in the document*, not a set of
+ * turns. A user dragging across a paragraph of one message and a couple of
+ * lines of another means "those two", so the rule is containment either way: a
+ * turn is included when any part of it is selected. Selecting a single word
+ * inside a long message takes the whole message, which is almost always what
+ * was meant -- and taking a fragment of a message would produce a transcript
+ * that reads as if the assistant had said only that fragment.
+ *
+ * Returns null when the selection touches no turn at all, which is the signal
+ * to fall back to the whole conversation rather than saving nothing.
+ *
+ * @param {Document} doc
+ * @param {Range} range
+ * @param {object} adapter
+ */
+export function extractSelection(doc, range, adapter) {
+	if (!range || range.collapsed) return null;
+
+	const container = doc.querySelector(adapter.container);
+	if (!container) return null;
+
+	// Compared with `compareBoundaryPoints` rather than offsets: a `Range` in a
+	// live document is not a static string, and a node can move between the
+	// selection being made and this running.
+	const selected = [];
+	for (const node of container.querySelectorAll(adapter.message)) {
+		if (range.intersectsNode(node)) selected.push(node);
+	}
+	if (selected.length === 0) return null;
+
+	const saved = (range.commonAncestorContainer.ownerDocument ?? doc).createRange();
+	try {
+		saved.selectNodeContents(selected[0]);
+		for (const node of selected.slice(1)) {
+			saved.setEnd(node, node.childNodes.length);
+		}
+
+		const scoped = {
+			...adapter,
+			container: adapter.message,
+			message: adapter.message,
+		};
+		const result = extractFromNodes(doc, new URL(doc.location?.href ?? 'https://claude.ai/'), scoped, selected);
+		if (!result.ok) return null;
+		result.conversation.partial = true;
+		return result;
+	} finally {
+		saved.detach?.();
+	}
+}
+
+/**
+ * Extracts a specific set of turn elements.
+ *
+ * Separate from `adapter.extract` so the selection path does not have to
+ * re-query the page and risk picking up a different set after a scroll.
+ */
+function extractFromNodes(doc, url, adapter, nodes) {
+	const turns = [];
+	const warnings = [];
+	let matchedKey = 0;
+
+	nodes.forEach((node, index) => {
+		const roleValue = readRole(node, adapter);
+		const mapped = adapter.roleMap[roleValue];
+		if (!mapped) {
+			warnings.push(`Selected turn ${index + 1} had an unrecognised role and was skipped.`);
+			return;
+		}
+		const stableKey = adapter.keyAttribute ? node.getAttribute(adapter.keyAttribute) ?? null : null;
+		if (stableKey) matchedKey += 1;
+		turns.push({
+			role: mapped,
+			body: readTurnText(node, adapter.strip),
+			key: stableKey ?? `selection:${index}`,
+		});
+	});
+
+	if (turns.length === 0) return { ok: false, reason: 'No roles could be identified in the selection.' };
+
+	// A selection is a subset by construction, so a lower confidence than a full
+	// capture is the honest report rather than a defect.
+	return {
+		ok: true,
+		conversation: {
+			title: doc.title ?? '',
+			source: adapter.id,
+			model: null,
+			url: url.href,
+			turns: turns.map(({ key, ...rest }) => rest),
+			keys: turns.map((t) => t.key),
+			order: turns.map((_, i) => i),
+			partial: true,
+		},
+		confidence: {
+			score: matchedKey === nodes.length ? 0.9 : 0.7,
+			complete: true,
+			strategy: 'dom',
+			warnings,
+		},
+	};
+}
+
+function readRole(node, adapter) {
+	try {
+		const found = node.matches?.(adapter.role) ? node : node.querySelector?.(adapter.role);
+		if (!found) return null;
+		const name = valueAttributeIn(adapter.role);
+		if (name) {
+			const value = found.getAttribute(name);
+			if (value) return value;
+		}
+		return found.getAttribute?.('data-role') ?? found.getAttribute?.('role') ?? null;
+	} catch {
+		return null;
+	}
+}
+
+function readTurnText(node, strip) {
+	const clone = node.cloneNode(true);
+	for (const selector of strip ?? []) {
+		for (const element of Array.from(clone.querySelectorAll(selector))) element.remove();
+	}
+	return (clone.textContent ?? '')
+		.replace(/\u00a0/g, ' ')
+		.replace(/[ \t]+\n/g, '\n')
+		.trim();
+}
+
+function valueAttributeIn(selector) {
+	const match = /\[([a-zA-Z-]+)(?:[\^$*~|]?=)?/.exec(selector ?? '');
+	return match ? match[1] : null;
+}
 
 /**
  * Sends a conversation to the app and returns what it did with it.

@@ -89,6 +89,7 @@ async function capture(tabId, { behaviour }) {
 			response.adapter,
 			{
 				signal: controller.signal,
+				selection: response.selection,
 				onProgress: (count) => chrome.tabs.sendMessage(tabId, { action: 'progress', count }),
 			}
 		);

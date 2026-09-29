@@ -20,11 +20,25 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 			}
 			// The document is passed by reference within the same realm, so the
 			// service worker's extraction runs against the live page.
+			// The live selection, cloned across the message boundary. `getRangeAt`
+			// returns a range anchored to nodes that a scroll can invalidate, so
+			// it is copied immediately rather than used later.
+			const active = document.getSelection();
+			let selection = null;
+			if (active && active.rangeCount > 0 && !active.isCollapsed) {
+				try {
+					selection = active.getRangeAt(0).cloneRange();
+				} catch {
+					selection = null;
+				}
+			}
+
 			sendResponse({
 				supported: true,
 				document,
 				location: { href: location.href, hostname: location.hostname },
 				adapter: serialiseAdapter(adapter),
+				selection,
 			});
 			return;
 		}
