@@ -124,7 +124,7 @@ xcodebuild -project Clipboard_saver.xcodeproj \
            -destination 'platform=macOS' test
 ```
 
-**149 tests, 0 failures** (146 unit, 3 UI).
+**150 tests, 0 failures** (147 unit, 3 UI).
 
 | Suite | Tests | Covers |
 |---|--:|---|
@@ -134,7 +134,7 @@ xcodebuild -project Clipboard_saver.xcodeproj \
 | `ServiceContractTests` | 13 | `Info.plist` ↔ selector contract |
 | `ChosenFilenameTests` | 17 | The name confirmed in the save panel |
 | `RTFToMarkdownTests` | 10 | Style-based conversion |
-| `MarkdownExporterTests` | 9 | Representation choice, Markdown detection |
+| `MarkdownExporterTests` | 10 | Representation choice, Markdown detection |
 | UI tests | 3 | Launch smoke test (Xcode template) |
 
 `ServiceContractTests` deserves a note. macOS dispatches a service by looking up
@@ -245,7 +245,7 @@ Clipboard_saver/
   FilenameGenerator.swift      Heading → safe unique filename
   Info.plist                   NSServices declarations, bundle identity
   Clipboard_saver.entitlements Sandbox off
-Clipboard_saverTests/          146 unit tests
+Clipboard_saverTests/          147 unit tests
 Clipboard_saverUITests/        Launch smoke test
 ```
 

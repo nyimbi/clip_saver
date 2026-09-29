@@ -23,7 +23,7 @@ panel).
 ## Build and test
 
 - `xcodebuild -project Clipboard_saver.xcodeproj -scheme Clipboard_saver -destination 'platform=macOS' test`
-- Current status: **149 tests, 0 failures** (146 unit, 3 UI). Clean Release build with zero
+- Current status: **150 tests, 0 failures** (147 unit, 3 UI). Clean Release build with zero
   warnings from project sources (the single warning emitted is from Xcode's
   `appintentsmetadataprocessor` toolchain step).
 - Target: macOS 15.5+, Swift 5 language mode, bundle id `datacraft.Clipboard-saver`.
@@ -228,7 +228,7 @@ The name confirmed in the save panel is used verbatim; the first destination
 may replace, additional destinations are collision-resolved; typed names are
 sanitised but not shortened to the readability limit.
 
-### `Clipboard_saverTests/MarkdownExporterTests.swift` (9 tests)
+### `Clipboard_saverTests/MarkdownExporterTests.swift` (10 tests)
 
 Representation precedence against synthetic multi-type pasteboards, plus the
 Markdown-detection table.

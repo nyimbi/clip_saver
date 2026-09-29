@@ -69,6 +69,70 @@ final class MarkdownExporterTests: XCTestCase {
         XCTAssertNil(MarkdownExporter.export(from: pasteboard(plain: "   \n\t  ")))
     }
 
+    /// End-to-end over a pasteboard shaped like the one a browser leaves
+    /// behind, exercising representation choice, HTML conversion, escaping and
+    /// every construct fixed in the converter work: a list item followed by a
+    /// nested list and then trailing text, sub/superscript, and an ordered list
+    /// with a start attribute.
+    func testRealisticBrowserHTMLConvertsCompletely() throws {
+        let html = """
+        <meta charset='utf-8'><h2 style="font-weight: bold;">Understanding macOS Pasteboards</h2>\
+        <p>Here is <b>what happened</b> during the <i>test</i>.</p>\
+        <ol><li>First step</li><li>Second step</li></ol>\
+        <ul><li>bullet one</li><li>bullet two</li></ul>\
+        <blockquote>Quoted wisdom.</blockquote>\
+        <pre>let x = 1
+        print(x)</pre>\
+        <table><tr><th>Name</th><th>Role</th></tr><tr><td>Alice</td><td>Engineer</td></tr></table>\
+        <p>See <a href="https://example.com/docs">the docs</a>.</p>\
+        <p>Formula: H<sub>2</sub>O, E=mc<sup>2</sup></p>\
+        <ul><li>Outer<ul><li>Inner</li></ul>tail text</li></ul>\
+        <ol start='3'><li>third</li><li>fourth</li></ol>
+        """
+        let board = pasteboard(
+            plain: "Understanding macOS Pasteboards\nHere is what happened during the test.",
+            html: html
+        )
+        let export = try XCTUnwrap(MarkdownExporter.export(from: board))
+        XCTAssertEqual(export.source, .html)
+
+        let expected = """
+        ## Understanding macOS Pasteboards
+
+        Here is **what happened** during the *test*.
+
+        1. First step
+        2. Second step
+
+        - bullet one
+        - bullet two
+
+        > Quoted wisdom.
+
+        ```
+        let x = 1
+        print(x)
+        ```
+
+        | Name | Role |
+        | --- | --- |
+        | Alice | Engineer |
+
+        See [the docs](https://example.com/docs).
+
+        Formula: H<sub>2</sub>O, E=mc<sup>2</sup>
+
+        - Outer
+          - Inner
+
+          tail text
+
+        3. third
+        4. fourth
+        """
+        XCTAssertEqual(export.text, expected)
+    }
+
     // MARK: - Markdown detection
 
     /// Regression: the old rule needed three list lines, or a heading *and* a
