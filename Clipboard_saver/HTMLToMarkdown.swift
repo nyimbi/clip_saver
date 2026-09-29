@@ -178,6 +178,11 @@ enum HTMLToMarkdown {
                 // Close up to the matching open element so mis-nested markup
                 // such as `<b><i></b></i>` still terminates correctly. Text is
                 // flushed first so it stays inside the element it belongs to.
+                //
+                // At the depth ceiling nothing was pushed for the matching
+                // open tag, so closing here would collapse every level between
+                // here and it and discard the document.
+                guard stack.count < maximumDepth else { continue }
                 if let position = stack.lastIndex(where: { $0.name == name }) {
                     flushText()
                     while stack.count > position { closeTop() }
@@ -432,6 +437,7 @@ enum HTMLToMarkdown {
         case quote(String)
         case code(language: String?, lines: [String])
         case listItem(depth: Int, ancestry: [Int], marker: String, lines: [String])
+        case continuation(depth: Int, ancestry: [Int], pad: Int, lines: [String])
         case rule
         case table([String])
     }
@@ -535,7 +541,7 @@ enum HTMLToMarkdown {
 
                 if name == "ul" || name == "ol" {
                     flush()
-                    openList(name == "ol", into: &listStack, nextListID: nextListID)
+                    openList(name == "ol", into: &listStack, nextListID: nextListID, start: startValue(of: element))
                     walkListItems(element.children, listStack: &listStack, chunks: &chunks, nextListID: nextListID)
                     listStack.removeLast()
                     continue
@@ -587,12 +593,29 @@ enum HTMLToMarkdown {
         into stack: inout [ListFrame],
         nextListID: ListID
     ) {
+        openList(ordered, into: &stack, nextListID: nextListID, start: nil)
+    }
+
+    private static func openList(
+        _ ordered: Bool,
+        into stack: inout [ListFrame],
+        nextListID: ListID,
+        start: Int?
+    ) {
         let id = nextListID.next()
         stack.append(ListFrame(
             ordered: ordered,
-            index: 0,
+            // `index` is the count before the next item, so start="5" makes
+            // the first item 5 rather than 1.
+            index: (start.map { max(1, $0) - 1 }) ?? 0,
             ancestry: (stack.last?.ancestry ?? []) + [id]
         ))
+    }
+
+    /// `<ol start="5">` and friends.
+    private static func startValue(of element: Element) -> Int? {
+        guard let raw = element.attributes["start"] else { return nil }
+        return Int(raw.trimmingCharacters(in: .whitespaces))
     }
 
     private static func walkListItems(
@@ -602,11 +625,20 @@ enum HTMLToMarkdown {
         nextListID: ListID
     ) {
         for node in nodes {
+            // Stray text inside a `<ul>`/`<ol>` is not a list item, but it is
+            // still content. It was previously dropped, which is how a
+            // document whose nesting hit the parser's depth ceiling could lose
+            // everything.
+            if case .text(let raw) = node {
+                let text = collapse(raw)
+                if !text.isEmpty { chunks.append(.paragraph(text)) }
+                continue
+            }
             guard case .element(let element) = node else { continue }
             if element.name == "li" {
                 emitListItem(element, listStack: &listStack, chunks: &chunks, nextListID: nextListID)
             } else if element.name == "ul" || element.name == "ol" {
-                openList(element.name == "ol", into: &listStack, nextListID: nextListID)
+                openList(element.name == "ol", into: &listStack, nextListID: nextListID, start: startValue(of: element))
                 walkListItems(element.children, listStack: &listStack, chunks: &chunks, nextListID: nextListID)
                 listStack.removeLast()
             }
@@ -631,23 +663,35 @@ enum HTMLToMarkdown {
         var pending: [String] = []
         var checkbox: Bool?
         var emitted = false
+        // Content that follows a nested list inside the same item. It has to
+        // be emitted separately: the parent item has already been written, and
+        // a second `listItem` at the same depth would read as a new bullet.
+        var tail: [String] = []
+
+        func appendLine(_ text: String) {
+            if emitted {
+                if !tail.isEmpty { tail.append("") }
+                tail.append(text)
+            } else {
+                if !lines.isEmpty { lines.append("") }
+                lines.append(text)
+            }
+        }
 
         func flushPending() {
             let text = collapse(pending.joined())
             pending.removeAll(keepingCapacity: true)
             guard !text.isEmpty else { return }
-            if lines.isEmpty {
-                lines.append(text)
-            } else {
-                lines.append("")
-                lines.append(text)
-            }
+            appendLine(text)
         }
 
         func emit() {
             if emitted { return }
+            // An item with no content at all would become a bare bullet, which
+            // is noise. Checked before `emitted` is set, otherwise the guard
+            // can never be true.
+            if lines.isEmpty { return }
             emitted = true
-            if lines.isEmpty { lines = [""] }
             if let checked = checkbox, var first = lines.first {
                 first = "[\(checked ? "x" : " ")] " + String(first.drop(while: { $0 == "-" || $0 == " " }))
                 lines[lines.startIndex] = first
@@ -655,6 +699,17 @@ enum HTMLToMarkdown {
             chunks.append(.listItem(depth: depth, ancestry: frame.ancestry, marker: marker, lines: lines))
             lines = []
             checkbox = nil
+        }
+
+        func emitTail() {
+            guard !tail.isEmpty else { return }
+            chunks.append(.continuation(
+                depth: depth,
+                ancestry: frame.ancestry,
+                pad: marker.count,
+                lines: tail
+            ))
+            tail = []
         }
 
         for child in item.children {
@@ -667,7 +722,10 @@ enum HTMLToMarkdown {
             case "ul", "ol":
                 flushPending()
                 emit()
-                openList(element.name == "ol", into: &listStack, nextListID: nextListID)
+                // Flush before descending, so text between two nested lists
+                // keeps its position in the document.
+                emitTail()
+                openList(element.name == "ol", into: &listStack, nextListID: nextListID, start: startValue(of: element))
                 walkListItems(element.children, listStack: &listStack, chunks: &chunks, nextListID: nextListID)
                 listStack.removeLast()
             case "input":
@@ -677,10 +735,7 @@ enum HTMLToMarkdown {
             case "p":
                 flushPending()
                 let text = collapse(inline(element.children))
-                if !text.isEmpty {
-                    if lines.isEmpty { lines.append(text) }
-                    else { lines.append(""); lines.append(text) }
-                }
+                if !text.isEmpty { appendLine(text) }
             default:
                 if containsBlockChild(element) {
                     flushPending()
@@ -688,8 +743,7 @@ enum HTMLToMarkdown {
                         .components(separatedBy: "\n") {
                         let collapsed = collapse(line)
                         guard !collapsed.isEmpty else { continue }
-                        if lines.isEmpty { lines.append(collapsed) }
-                        else { lines.append(""); lines.append(collapsed) }
+                        appendLine(collapsed)
                     }
                 } else {
                     pending.append(inline([.element(element)]))
@@ -698,6 +752,7 @@ enum HTMLToMarkdown {
         }
         flushPending()
         emit()
+        emitTail()
     }
 
     private static func walkDefinitionList(_ nodes: [Node], chunks: inout [Chunk]) {
@@ -737,7 +792,7 @@ enum HTMLToMarkdown {
         }
         language = language.flatMap(normalizeLanguage)
 
-        var body = rawTextOf(element.children)
+        var body = preformattedText(of: element.children)
         // Browsers wrap preformatted content in a leading and trailing newline.
         if body.hasPrefix("\n") { body.removeFirst() }
         if body.hasSuffix("\n") { body.removeLast() }
@@ -771,6 +826,9 @@ enum HTMLToMarkdown {
         var rows: [[String]] = []
         collectRows(element.children, into: &rows)
         guard let widest = rows.map(\.count).max(), widest > 0 else { return [] }
+        // An empty table carries no information; emitting it would add a bare
+        // pipe row to the output.
+        guard rows.contains(where: { row in row.contains(where: { !$0.isEmpty }) }) else { return [] }
         for index in rows.indices where rows[index].count < widest {
             rows[index].append(contentsOf: Array(repeating: "", count: widest - rows[index].count))
         }
@@ -855,9 +913,14 @@ enum HTMLToMarkdown {
                 return text.isEmpty ? "" : "~~\(text)~~"
             case "sup":
                 let text = collapse(inline(element.children))
-                return text.isEmpty ? "" : "<\(text)>"
+                return text.isEmpty ? "" : "<sup>\(text)</sup>"
+            case "sub":
+                // Previously this fell through to the generic inline case and
+                // the subscript text was dropped entirely.
+                let text = collapse(inline(element.children))
+                return text.isEmpty ? "" : "<sub>\(text)</sub>"
             case "u", "ins", "mark", "small", "big", "span", "font", "abbr",
-                 "label", "time", "q", "nobr", "wbr", "ruby", "rt", "sub", "bdi", "bdo":
+                 "label", "time", "q", "nobr", "wbr", "ruby", "rt", "bdi", "bdo":
                 return styleAware(inline(element.children), element)
             default:
                 return inline(element.children)
@@ -932,6 +995,25 @@ enum HTMLToMarkdown {
     }
 
     // MARK: - Text helpers
+
+    /// Text of a preformatted block, where `<br>` is a real line break rather
+    /// than a tag to ignore.
+    static func preformattedText(of nodes: [Node]) -> String {
+        var out = ""
+        for node in nodes {
+            switch node {
+            case .text(let text):
+                out += text
+            case .element(let element):
+                if element.name == "br" {
+                    out += "\n"
+                } else {
+                    out += preformattedText(of: element.children)
+                }
+            }
+        }
+        return out
+    }
 
     static func rawTextOf(_ nodes: [Node]) -> String {
         var out = ""
@@ -1061,6 +1143,14 @@ enum HTMLToMarkdown {
                 let opening = language.map { "\(fence)\(escapeInline($0))" } ?? fence
                 block = ([opening] + lines + [fence]).joined(separator: "\n")
 
+            case .continuation(let depth, _, let pad, let lines):
+                let indent = String(repeating: "  ", count: depth)
+                let padString = String(repeating: " ", count: pad)
+                block = lines
+                    .map { $0.isEmpty ? "" : indent + padString + $0 }
+                    .joined(separator: "\n")
+                    .trimmingNewlines()
+
             case .listItem(let depth, _, let marker, let lines):
                 let indent = String(repeating: "  ", count: depth)
                 let pad = String(repeating: " ", count: marker.count)
@@ -1100,10 +1190,18 @@ enum HTMLToMarkdown {
     /// type at the same depth -- an `<ol>` followed by a `<ul>` -- starts a new
     /// list and needs a blank line, or the two lists are indistinguishable.
     private static func belongsToSameList(as chunk: Chunk, after previous: Chunk?) -> Bool {
-        guard case .listItem(_, let ancestry, _, _) = chunk,
-              case .listItem(_, let previousAncestry, _, _) = previous
-        else { return false }
-        return isPrefix(ancestry, of: previousAncestry) || isPrefix(previousAncestry, of: ancestry)
+        switch (chunk, previous) {
+        case let (.listItem(_, ancestry, _, _), .listItem(_, previousAncestry, _, _)):
+            return isPrefix(ancestry, of: previousAncestry) || isPrefix(previousAncestry, of: ancestry)
+        case let (.listItem(_, ancestry, _, _), .continuation(_, previousAncestry, _, _)):
+            // A sibling item after a nested list continues the same list, so
+            // it stays tight.
+            return isPrefix(ancestry, of: previousAncestry) || isPrefix(previousAncestry, of: ancestry)
+        default:
+            // A continuation follows its own item and needs a blank line; a
+            // continuation then a nested list needs one too.
+            return false
+        }
     }
 
     private static func isPrefix(_ shorter: [Int], of longer: [Int]) -> Bool {
@@ -1129,5 +1227,15 @@ enum HTMLToMarkdown {
             }
         }
         return max(3, longestRun + 1)
+    }
+}
+
+private extension String {
+    /// Drops trailing newlines so a multi-line block does not double up on the
+    /// separator `join` adds.
+    func trimmingNewlines() -> String {
+        var result = self
+        while result.hasSuffix("\n") { result.removeLast() }
+        return result
     }
 }

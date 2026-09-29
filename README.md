@@ -124,11 +124,11 @@ xcodebuild -project Clipboard_saver.xcodeproj \
            -destination 'platform=macOS' test
 ```
 
-**137 tests, 0 failures** (134 unit, 3 UI).
+**149 tests, 0 failures** (146 unit, 3 UI).
 
 | Suite | Tests | Covers |
 |---|--:|---|
-| `HTMLToMarkdownTests` | 52 | Structure preservation, escaping, hostile input, throughput |
+| `HTMLToMarkdownTests` | 64 | Structure preservation, escaping, hostile input, throughput |
 | `FilenameGeneratorTests` | 15 | Title extraction, sanitising, collisions |
 | `SavePipelineTests` | 18 | Pasteboard → file on disk, destination resolution, failures |
 | `ServiceContractTests` | 13 | `Info.plist` ↔ selector contract |
@@ -245,7 +245,7 @@ Clipboard_saver/
   FilenameGenerator.swift      Heading → safe unique filename
   Info.plist                   NSServices declarations, bundle identity
   Clipboard_saver.entitlements Sandbox off
-Clipboard_saverTests/          134 unit tests
+Clipboard_saverTests/          146 unit tests
 Clipboard_saverUITests/        Launch smoke test
 ```
 

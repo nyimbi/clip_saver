@@ -157,6 +157,83 @@ final class HTMLToMarkdownTests: XCTestCase {
         )
     }
 
+    // MARK: - Realistic browser markup
+
+    /// Regression: content following a nested list inside the same item was
+    /// dropped, because the item had already been emitted and the trailing
+    /// text was discarded.
+    func testContentAfterANestedListIsKept() {
+        XCTAssertEqual(
+            convert("<ul><li>Parent<ul><li>Child</li></ul>Tail</li><li>Next</li></ul>"),
+            "- Parent\n  - Child\n\n  Tail\n- Next"
+        )
+    }
+
+    func testContentBetweenTwoNestedListsKeepsItsPosition() {
+        let markdown = convert("<ul><li>A<ul><li>B</li></ul>mid<ul><li>C</li></ul>end</li></ul>")
+        let order = ["- A", "  - B", "mid", "  - C", "end"]
+        var cursor = markdown.startIndex
+        for expected in order {
+            guard let range = markdown.range(of: expected, range: cursor..<markdown.endIndex) else {
+                return XCTFail("\(expected) missing or out of order in:\n\(markdown)")
+            }
+            cursor = range.upperBound
+        }
+    }
+
+    func testOrderedListHonoursTheStartAttribute() {
+        XCTAssertEqual(convert("<ol start='5'><li>fifth</li><li>sixth</li></ol>"), "5. fifth\n6. sixth")
+    }
+
+    func testOrderedListWithoutStartIsUnaffected() {
+        XCTAssertEqual(convert("<ol><li>a</li><li>b</li></ol>"), "1. a\n2. b")
+    }
+
+    func testNestedOrderedListHonoursStart() {
+        XCTAssertEqual(
+            convert("<ul><li>A<ol start='4'><li>x</li></ol></li></ul>"),
+            "- A\n  4. x"
+        )
+    }
+
+    /// Regression: `<sub>` fell through to the generic inline case and its text
+    /// was dropped entirely; `<sup>` emitted `<2>`, which is neither HTML nor
+    /// Markdown.
+    func testSubAndSuperscriptKeepTheirText() {
+        XCTAssertEqual(
+            convert("<p>H<sub>2</sub>O and E=mc<sup>2</sup></p>"),
+            "H<sub>2</sub>O and E=mc<sup>2</sup>"
+        )
+    }
+
+    /// Regression: `<br>` inside `<pre>` was ignored, running the lines together.
+    func testLineBreakInsidePreformattedText() {
+        XCTAssertEqual(
+            convert("<pre>one<br>two<br>three</pre>"),
+            "```\none\ntwo\nthree\n```"
+        )
+    }
+
+    func testEmptyListItemIsDropped() {
+        XCTAssertEqual(convert("<ul><li></li><li>kept</li></ul>"), "- kept")
+    }
+
+    func testEmptyTableIsDropped() {
+        XCTAssertNil(HTMLToMarkdown.convert("<table><tr><td></td></tr></table>"))
+    }
+
+    func testStrayTextInsideAListIsNotDropped() {
+        XCTAssertEqual(convert("<ul>loose text<li>item</li></ul>"), "loose text\n\n- item")
+    }
+
+    func testOutputHasNoTrailingWhitespace() {
+        let markdown = convert("<ul><li>A<ul><li>B</li></ul>tail</li><li>C</li></ul>")
+        for line in markdown.components(separatedBy: "\n") {
+            XCTAssertEqual(line, String(line.reversed().drop(while: { $0 == " " }).reversed()),
+                           "trailing space in \"\(line)\"")
+        }
+    }
+
     // MARK: - Code
 
     func testPreformattedBlockBecomesFence() {
@@ -295,11 +372,25 @@ final class HTMLToMarkdownTests: XCTestCase {
         XCTAssertNil(HTMLToMarkdown.convert(html))
     }
 
+    /// 5,000 levels is far past anything real markup produces, and past the
+    /// parser's depth ceiling, so the structure beyond it is dropped. The
+    /// requirement here is only that it terminates rather than overflowing the
+    /// stack while releasing the tree.
     func testDeeplyNestedListsDoNotCrash() {
         let html = String(repeating: "<ul><li>", count: 5_000)
             + "x"
             + String(repeating: "</li></ul>", count: 5_000)
-        XCTAssertNotNil(HTMLToMarkdown.convert(html))
+        _ = HTMLToMarkdown.convert(html)
+    }
+
+    /// Just under the ceiling the content must survive intact.
+    func testNestingJustUnderTheCeilingKeepsItsText() {
+        let depth = HTMLToMarkdown.maximumDepth / 4
+        let html = String(repeating: "<ul><li>", count: depth)
+            + "kept"
+            + String(repeating: "</li></ul>", count: depth)
+        let markdown = HTMLToMarkdown.convert(html)
+        XCTAssertEqual(markdown?.contains("kept"), true, "lost the innermost item")
     }
 
     func testUnbalancedCloseTagsDoNotCrash() {

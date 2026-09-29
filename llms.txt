@@ -23,7 +23,7 @@ panel).
 ## Build and test
 
 - `xcodebuild -project Clipboard_saver.xcodeproj -scheme Clipboard_saver -destination 'platform=macOS' test`
-- Current status: **137 tests, 0 failures** (134 unit, 3 UI). Clean Release build with zero
+- Current status: **149 tests, 0 failures** (146 unit, 3 UI). Clean Release build with zero
   warnings from project sources (the single warning emitted is from Xcode's
   `appintentsmetadataprocessor` toolchain step).
 - Target: macOS 15.5+, Swift 5 language mode, bundle id `datacraft.Clipboard-saver`.
@@ -191,7 +191,7 @@ sending AppleEvents to Finder both require it.
 
 ## Test files
 
-### `Clipboard_saverTests/HTMLToMarkdownTests.swift` (52 tests)
+### `Clipboard_saverTests/HTMLToMarkdownTests.swift` (64 tests)
 
 Structure preservation per construct, escaping, task lists, tables, entities,
 and hostile input: 200k unclosed tags, 100k balanced, 5k nested lists, 100k
@@ -279,6 +279,30 @@ Plus two found by fuzzing the parser afterwards:
    non-string element discarded every path. Now filtered element by element.
    The parsing is separated from the acquisition, which is what makes this
    branch testable at all — the type itself cannot be synthesised.
+
+Six further converter defects, found by running realistic browser clipboard
+markup through it and reading the output:
+
+9. **Content after a nested list was dropped.** `<li>Parent<ul>…</ul>Tail</li>`
+   lost "Tail" entirely, because the item had already been emitted and the
+   trailing text was discarded. Tail content is now a `Chunk.continuation`
+   rendered as an indented paragraph belonging to the item.
+10. **`<sub>` dropped its text; `<sup>` produced `<2>`.** `sub` fell through to
+    the generic inline case and lost its content; `sup` emitted `<2>`, which is
+    neither HTML nor Markdown. Both now emit real `<sub>`/`<sup>` tags, which
+    Markdown passes through.
+11. **`<ol start="N">` was ignored**, so a list starting at 5 numbered from 1.
+    `startValue(of:)` is now honoured on both top-level and nested lists.
+12. **`<br>` inside `<pre>` produced no line break** — `rawTextOf` ignores tags,
+    so preformatted lines ran together. `preformattedText(of:)` treats `<br>` as
+    a newline.
+13. **Empty `<li>` and all-empty tables emitted noise** (a bare `- ` bullet, a
+    bare pipe row). Both are now dropped.
+14. **Stray text inside a `<ul>`/`<ol>` was dropped**, because `walkListItems`
+    only handled element children. This also meant that a document whose
+    nesting exceeded the parser's depth ceiling lost everything. Separately, a
+    close tag arriving at the ceiling would mass-pop the stack and collapse the
+    whole tree, so closes are now ignored there too.
 
 One change was made and reverted after testing: collapsing `saveToFolder` and
 `saveHere` into a single service. It looked like a duplicate-menu-entry
