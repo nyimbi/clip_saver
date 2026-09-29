@@ -30,6 +30,10 @@ struct BridgeRequest: Codable {
     /// Present for `saveConversation` with `behaviour == "auto"`.
     var destination: String?
     var behaviour: Behaviour?
+    /// Names one of the user's configured destinations. Takes precedence over
+    /// `destination`, and an unknown name falls back rather than failing — an
+    /// extension from a future build should still be able to save.
+    var preset: String?
     /// Present for `searchArchive`.
     var query: String?
 }
@@ -172,7 +176,12 @@ struct BridgeHandler {
 
         do {
             let saver = ConversationSaver()
-            let saved = try saver.save(conversation, destination: request.destination, behaviour: request.behaviour ?? .ask)
+            let saved = try saver.save(
+                conversation,
+                destination: request.destination,
+                behaviour: request.behaviour ?? .ask,
+                preset: request.preset
+            )
             let result = BridgeResponse.SaveResult(
                 path: saved.path,
                 action: saved.action,

@@ -41,7 +41,7 @@ final class BridgeHandlerTests: XCTestCase {
         BridgeRequest(
             version: version, id: id, action: .saveConversation,
             conversation: conversation, destination: destination,
-            behaviour: behaviour, query: nil
+            behaviour: behaviour, preset: nil, query: nil
         )
     }
 
@@ -92,7 +92,7 @@ final class BridgeHandlerTests: XCTestCase {
     func testSearchWithoutAQueryIsRefused() {
         let request = BridgeRequest(
             version: BridgeHandler.currentVersion, id: "q", action: .searchArchive,
-            conversation: nil, destination: nil, behaviour: nil, query: "   "
+            conversation: nil, destination: nil, behaviour: nil, preset: nil, query: "   "
         )
         let response = BridgeHandler().handle(request)
         XCTAssertFalse(response.ok)
@@ -440,7 +440,7 @@ final class BridgeHandlerTests: XCTestCase {
     func testSearchReturnsMarkdown() {
         let request = BridgeRequest(
             version: BridgeHandler.currentVersion, id: "q1", action: .searchArchive,
-            conversation: nil, destination: nil, behaviour: nil, query: "actors"
+            conversation: nil, destination: nil, behaviour: nil, preset: nil, query: "actors"
         )
         let response = BridgeHandler().handle(request)
         XCTAssertTrue(response.ok)

@@ -43,6 +43,11 @@ struct ConversationSaver {
         var incompleteReason: String?
     }
 
+    /// Where configured destinations come from. Injectable for the same reason
+    /// the resolver takes them: a test must not write to the user's real
+    /// settings.
+    var defaults: UserDefaults = .standard
+
     /// Asks for a filename. `nil` when the user cancels.
     var requestFilename: (_ suggested: String, _ directory: URL) -> String?
 
@@ -50,48 +55,75 @@ struct ConversationSaver {
         self.requestFilename = requestFilename
     }
 
+    /// Saves against a destination.
+    ///
+    /// A destination named by the user's own configuration wins over one supplied
+    /// by the extension: the extension is a separate process and is not the thing
+    /// that should decide where anything is written.
     func save(
         _ conversation: Conversation,
         destination: String?,
+        behaviour: BridgeRequest.Behaviour,
+        preset: String? = nil
+    ) throws -> Result {
+        if let preset {
+            return try write(conversation, into: DestinationResolver.resolve(preset: preset, defaults: defaults), behaviour: behaviour)
+        }
+        if let destination {
+            return try write(
+                conversation,
+                into: Destination.resolve(preset: nil, path: destination),
+                behaviour: behaviour
+            )
+        }
+        // Nothing named, so this is the fallback rather than a configuration.
+        let folder = try check(DestinationResolver.defaultDirectory() ?? URL(fileURLWithPath: "/"), configured: false)
+        return try write(conversation, into: .separate(folder), behaviour: behaviour)
+    }
+
+    /// The real save, against a resolved destination.
+    func write(
+        _ conversation: Conversation,
+        into destination: Destination,
         behaviour: BridgeRequest.Behaviour
     ) throws -> Result {
-        let directory = try resolveDirectory(destination)
+        let directory = try check(destination.directory)
+        switch destination {
+        case .separate: return try saveSeparate(conversation, into: directory, behaviour: behaviour)
+        case .daily: return try saveDaily(conversation, into: directory)
+        case .append(let url, _): return try saveAppending(conversation, into: url)
+        }
+    }
+
+    // MARK: - One file per conversation
+
+    private func saveSeparate(
+        _ conversation: Conversation,
+        into directory: URL,
+        behaviour: BridgeRequest.Behaviour
+    ) throws -> Result {
         let existing = existingFile(for: conversation, in: directory)
         // A hand-edited file stops matching, because the edit is precisely what
         // the comparison looks at. So the decline has to be recorded here rather
         // than discovered later: the file is found, recognised as not-updatable,
         // and the save is reported as the deliberate `writeAlongside` it is.
-        // Falling through to `writeNew` instead would tell the user their thread
-        // was saved while quietly making a duplicate of a file they had edited.
         let action = IncrementalSave.decide(existing: existing?.text, incoming: conversation)
         let document = IncrementalSave.apply(action, incoming: conversation, existing: existing?.text)
             ?? ConversationRenderer.render(conversation)
 
-        // The conversation's own title, not the rendered document. Deriving a
-        // name from the document means asking the filename generator to find the
-        // first heading, and the document's first heading is the title anyway —
-        // but an untitled conversation then falls through to the date-based
-        // default, and a platform that hid its heading yields a name like
-        // `clipboard_save_2026-09-29`. The title is the fact we have.
         // Name the file the conversation already has, when there is one.
         //
-        // Deriving a name from the title and letting `FilenameGenerator` resolve
-        // the collision looks equivalent, and is not: on an `unchanged` re-save
-        // the document is not rewritten, so no file exists at the resolved
-        // path, and the *next* save then finds a collision and picks "Thread
-        // (1).md" — a different filename, therefore a different fingerprint,
-        // therefore a brand new conversation. Three files from one thread. The
-        // existing file's own name is the only name guaranteed to be stable.
-        let title = Frontmatter.resolvedTitle(conversation)
+        // Deriving a name from the title and letting the generator resolve the
+        // collision looks equivalent and is not: on an `unchanged` re-save nothing
+        // is written, so no file exists at the resolved path, and the *next* save
+        // then finds a collision and picks "Thread (1).md" -- a different
+        // filename, therefore a different fingerprint, therefore a brand new
+        // conversation. Three files from one thread.
         let suggested: String
         if let existing, action != .writeAlongside {
             suggested = existing.url.lastPathComponent
         } else {
-            suggested = FilenameGenerator.make(
-                from: title.isEmpty ? conversation.turns.first?.body ?? "Chat" : title,
-                fileExtension: "md",
-                in: directory
-            )
+            suggested = DestinationResolver.filename(for: conversation, at: .separate(directory))
         }
 
         let name: String
@@ -103,38 +135,115 @@ struct ConversationSaver {
             name = chosen
         }
 
-        // `writeAlongside` deliberately lands on a fresh name rather than
-        // overwriting, so a second save of a hand-edited file costs the user a
-        // duplicate rather than their edits.
         let target = action == .writeAlongside
             ? FilenameGenerator.resolveCollision(name, in: directory)
             : name
-
         let url = directory.appendingPathComponent(target)
 
         // `unchanged` means the bytes are already correct, so writing them again
         // would churn the mtime and wake every watcher on the folder for no
-        // reason. The file is reported as saved either way — from the
-        // extension's point of view the conversation is on disk, which is what
-        // it asked about.
-        if action != .unchanged {
-            try writeAtomically(document, to: url, directory: directory)
-        } else if !FileManager.default.fileExists(atPath: url.path) {
-            // Defensive: `unchanged` implies an existing file, so this should be
-            // unreachable. Writing it anyway is better than reporting a path
-            // that does not exist.
+        // reason.
+        if action != .unchanged || !FileManager.default.fileExists(atPath: url.path) {
             try writeAtomically(document, to: url, directory: directory)
         }
 
-        return Result(
-            path: url.path,
-            action: describe(action),
+        return result(path: url, action: describe(action), conversation: conversation)
+    }
+
+    // MARK: - Daily note
+
+    /// Merges a conversation into one dated file.
+    ///
+    /// A daily note is not a file this tool wrote: it has the user's own prose,
+    /// no frontmatter and no body hash, so `IncrementalSave` would correctly
+    /// classify it as foreign and decline. The section mechanism exists for
+    /// exactly this case, and everything outside a marked section is the user's
+    /// and is never rewritten.
+    private func saveDaily(_ conversation: Conversation, into directory: URL) throws -> Result {
+        let url = directory.appendingPathComponent(
+            DestinationResolver.filename(for: conversation, at: .daily(directory))
+        )
+
+        let exists = FileManager.default.fileExists(atPath: url.path)
+        let existing = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+
+        // A file that exists but does not read as text is not something to
+        // rewrite. `String(contentsOf:)` failing is the signal.
+        if exists && existing.isEmpty { throw Failure.unwritable(url.path) }
+
+        let action = DailyNote.decide(note: existing, conversation: conversation)
+        guard let updated = DailyNote.apply(action, note: existing, conversation: conversation) else {
+            return result(path: url, action: "unchanged", conversation: conversation)
+        }
+        try writeAtomically(updated, to: url, directory: directory)
+
+        let label: String
+        switch action {
+        case .replace: label = "replace"
+        case .insert: label = exists ? "insert" : "writeNew"
+        case .unchanged, .refuse: label = "unchanged"
+        }
+        return result(path: url, action: label, conversation: conversation)
+    }
+
+    // MARK: - One growing file
+
+    /// Appends to a single named file, so one platform's conversations
+    /// accumulate in one place.
+    ///
+    /// Not the default and not deduplicated: an append-only file has no
+    /// per-conversation identity, so the same conversation saved twice appears
+    /// twice with no way to take one out. That is acceptable for a deliberate log
+    /// and not acceptable as a default.
+    private func saveAppending(_ conversation: Conversation, into url: URL) throws -> Result {
+        let exists = FileManager.default.fileExists(atPath: url.path)
+        let existing = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+        if exists && existing.isEmpty { throw Failure.unwritable(url.path) }
+
+        let updated = DailyNote.appending(DailyNote.makeSection(conversation), to: existing)
+        try writeAtomically(updated, to: url, directory: url.deletingLastPathComponent())
+        return result(path: url, action: exists ? "insert" : "writeNew", conversation: conversation)
+    }
+
+    // MARK: - Results
+
+    private func result(path: URL, action: String, conversation: Conversation) -> Result {
+        Result(
+            path: path.path,
+            action: action,
             turns: conversation.turns.count,
             confidence: conversation.confidence?.score ?? 1,
             complete: conversation.confidence?.complete ?? true,
             incompleteReason: conversation.confidence?.warnings.first
         )
     }
+
+    /// Checks a directory exists, is a directory, and is writable.
+    ///
+    /// - Parameter configured: `true` when the folder came from the user's own
+    ///   settings rather than a fallback. A *missing* fallback folder means
+    ///   nothing is configured, which the user fixes by choosing a destination;
+    ///   a missing configured folder means something is wrong with it, which they
+    ///   fix by creating it. Reporting the same error for both sends them to the
+    ///   wrong place.
+    private func check(_ candidate: URL, configured: Bool = true) throws -> URL {
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: candidate.path) else {
+            if configured { throw Failure.unwritable(candidate.path) }
+            throw Failure.noDestination
+        }
+        var isDirectory: ObjCBool = false
+        guard fm.fileExists(atPath: candidate.path, isDirectory: &isDirectory) else {
+            throw Failure.unwritable(candidate.path)
+        }
+        guard isDirectory.boolValue else { throw Failure.unwritable(candidate.path) }
+        guard fm.isWritableFile(atPath: candidate.path) else {
+            throw Failure.unwritable(candidate.path)
+        }
+        return candidate
+    }
+
+
 
     // MARK: - Destination
 
