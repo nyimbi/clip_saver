@@ -35,14 +35,37 @@ extension's card in `chrome://extensions`.
 
 The selectors in `src/adapters.js` are **unverified against live sites**. The
 fixtures under `test/fixtures/` are hand-written from the structure the adapters
-document, so they verify the adapters' contract — role mapping, key extraction,
-ordering, title handling, and the confidence reported when a page does not match
-— and nothing more. A fixture written from a guess would encode the guess and
-then pass by confirming it.
+document, so they verify the adapters' *contract* — role mapping, key
+extraction, ordering, title handling, and the confidence reported when a page
+does not match — and nothing more. A fixture written from a guess would encode
+the guess and then pass by confirming it.
 
-To verify the selectors, open a real conversation and save the page. If a capture
-comes back marked incomplete, or missing turns, that is the adapter failing and
-the markup is the evidence.
+Fetching a logged-out page does not settle it either. `claude.ai` and
+`chatgpt.com` return 403 to a plain request, and `gemini.google.com` returns a
+login wall — no conversation in the HTML, so every selector comes back empty
+whether it is right or wrong. Only a page saved from a signed-in conversation
+can answer the question.
+
+### Checking a real conversation
+
+1. Open a conversation with several exchanges, and scroll so a few are visible.
+2. Save the page: `Cmd+S`, or DevTools → the ⋮ menu → "Save all as…". Prefer
+   "Webpage, HTML only" — a single file, which is what the checker reads.
+3. Run the checker against it:
+
+   ```sh
+   node bridge/verify-page.js ~/Downloads/claude.html https://claude.ai/chat/abc123
+   ```
+
+   It reports which adapter matched, how many turns were found, the roles, how
+   many turns had a stable id rather than a positional fallback, and the
+   confidence. `--write-fixture` emits it as a fixture; **review the file before
+   committing, because a saved conversation is private.**
+
+If it says the selectors do not match, that is the useful outcome. Copy the
+outerHTML of one message from DevTools, look for the marker that identifies who
+spoke and any per-message id, and update the adapter in `src/adapters.js`. Then
+re-run the checker.
 
 ## Permissions
 

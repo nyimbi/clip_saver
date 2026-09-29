@@ -19,9 +19,14 @@ REPO="$PWD"
 
 HOST_SRC="$REPO/bridge/host/build/clipboard-saver-host"
 APP_BUNDLE="/Applications/Clipboard_saver.app"
+# The host binary, NOT the app. The manifest's `path` is what the browser
+# launches; pointing it at the app would start an LSUIElement agent that never
+# reads stdin, and the extension would report the app as not installed. The
+# entire reason the host is a separate binary is that this path must not be the
+# app.
 HOST_IN_BUNDLE="$APP_BUNDLE/Contents/MacOS/clipboard-saver-host"
+HOST_MANIFEST_PATH="$HOST_IN_BUNDLE"
 TEMPLATE="$REPO/bridge/native-messaging-host.json"
-APP_BIN="$APP_BUNDLE/Contents/MacOS/Clipboard_saver"
 
 if [ ! -f "$HOST_SRC" ]; then
 	echo "The host is not built. Run bridge/host/build.sh first." >&2
@@ -77,7 +82,7 @@ write_manifest() {
 	# Written from the template so the path and the allowed origin cannot drift
 	# from the documented ones.
 	sed \
-		-e "s|PLACEHOLDER_PATH|$APP_BIN|" \
+		-e "s|PLACEHOLDER_PATH|$HOST_MANIFEST_PATH|" \
 		-e "s|PLACEHOLDER_ORIGIN|$ORIGIN|" \
 		"$TEMPLATE" >"$dir/datacraft.Clipboard_saver.json"
 	echo "wrote $dir/datacraft.Clipboard_saver.json"
