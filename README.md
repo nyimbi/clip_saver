@@ -264,6 +264,12 @@ Clipboard_saverTests/          150 unit tests
 Clipboard_saverUITests/        Launch smoke test
 scripts/test.sh                Runs the suite and fails on a vacuous pass
 scripts/make-icon.swift        Regenerates the icon artwork
+bridge/                        Browser extension and native messaging host
+  src/adapters.js              Per-platform extraction
+  src/harvest.js               Virtualized-list capture
+  host/build.sh                Builds the native messaging host
+  extension/                   Unpacked Manifest V3 extension
+PLAN.md                        Browser chat archiving: plan and status
 LICENSE                        Apache 2.0
 ```
 

@@ -64,7 +64,13 @@ three links. Backed by 0.3.
 **1.4 Search service** — a Services-menu entry. Answers from the pasteboard, no
 app launch, no browser. Makes the archive worth having.
 
-**1.5 Dedupe and tags** — near-duplicate collapse, content-derived tagging.
+**1.5 Dedupe and tags** — content-derived tagging, and exact-duplicate
+grouping. *Near*-duplicate collapsing is deliberately **not** built: it needs a
+similarity threshold, and a wrong merge destroys a conversation that exists
+nowhere else. Exact grouping is free because it is a fingerprint lookup, and it
+already catches the common case of the same thread saved repeatedly. Near
+duplicate detection is a decision for someone who owns real archives to lose,
+not a default.
 
 Gate: FTS5 index rebuilds from disk, search returns turn-level hits, re-save is
 idempotent under test.
@@ -148,3 +154,34 @@ sockets; the extension's full permission set is inspectable.
 - No PDF. The competitor set has it and it is a rendering product, not a
   conversion one.
 - No mobile. Requires a different architecture entirely.
+
+## Status
+
+| Phase | State |
+|---|---|
+| 0 — model, frontmatter, fingerprint, incremental save | done |
+| 1 — FTS5 index, search service, tags, dedup | done |
+| 2 — protocol, host, extension, adapters, harvester | done, except store submission |
+| 3 — store submission | needs your accounts |
+
+Verified: 389 Swift tests, 60 extension tests, 0 failures. The host is exercised
+over a real pipe, and the harvester against 300 randomised configurations.
+
+## The one thing left that only a person can do
+
+**The adapter selectors are unverified against live sites.** The fixtures under
+`bridge/test/fixtures/` are hand-written from the structure the adapters
+document, so they verify the adapters' *contract* — role mapping, key
+extraction, ordering, title handling, and the confidence reported when a page
+does not match — and nothing about whether those selectors match Anthropic's or
+OpenAI's current markup. A fixture written from a guess would encode the guess
+and then pass by confirming it, which is the same failure mode this project has
+been fixing all along.
+
+To close it: open a real conversation, right-click, "Save conversation as
+Markdown". Then save the page as HTML and commit it as a fixture. A capture that
+comes back marked incomplete, or missing turns, is the adapter failing and the
+markup is the evidence.
+
+Everything else in this plan is built and tested. This one needs a browser, an
+account, and a real conversation.
