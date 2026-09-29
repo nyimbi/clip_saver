@@ -355,12 +355,22 @@ allowlisted, but it must not be presented as a working entry point.
 
 ## Assets
 
-- `Clipboard_saver/Assets.xcassets/AppIcon.appiconset` holds 10 PNGs: sizes
-  16/32/128/256/512 at 1x and 2x, all `idiom: mac`. Optical weight is keyed on
-  the *point* size, not the pixel count, so the two slots that share a pixel
-  count (`16@2x` and `32@1x` are both 32 px) rasterise differently. A
-  resolution-independent design that scales purely by pixel count makes those
-  two files byte-identical, which is what an earlier iteration did.
+- `scripts/make-icon.swift` generates the artwork. Run with no argument to
+  overwrite `Clipboard_saver/Assets.xcassets/AppIcon.appiconset`, or pass a
+  directory to render elsewhere (a 1024 px `preview-1024.png` is written only in
+  that case). It reproduces the committed PNGs byte-for-byte. The artwork is
+  committed as well as generated, so a checkout builds without running it.
+- The 10 slots are sizes 16/32/128/256/512 at 1x and 2x, all `idiom: mac`.
+  Optical weight is keyed on the *point* size, not the pixel count, so the slots
+  that share a pixel count (`16@2x` and `32@1x` are both 32 px) rasterise
+  differently. A design that scales purely by pixel count makes each such pair
+  byte-identical; `actool` then drops the duplicate and the representation never
+  reaches the `.icns`. The script fails with a non-zero exit if any two slots
+  encode to the same bytes, which is the regression that produced a 4-entry
+  `.icns` on the first attempt.
+- The border stroke has a floor of 0.85 device pixel (`hairline` in the script).
+  Without it the 10-unit design stroke falls below one pixel at 16 px and the
+  border disappears entirely.
 - `actool` emits 10 `Icon Image` renditions into `Assets.car` (5 × 1x, 5 × 2x)
   plus a `MultiSized Image` entry. The `AppIcon.icns` it writes alongside holds
   only 4 representations (`ic04` 16, `ic11` 16@2x, `ic07` 128, `ic13` 128@2x).

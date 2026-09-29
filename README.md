@@ -263,6 +263,7 @@ Clipboard_saver/
 Clipboard_saverTests/          150 unit tests
 Clipboard_saverUITests/        Launch smoke test
 scripts/test.sh                Runs the suite and fails on a vacuous pass
+scripts/make-icon.swift        Regenerates the icon artwork
 ```
 
 The project uses Xcode 16 synchronized folder groups, so a new `.swift` file
