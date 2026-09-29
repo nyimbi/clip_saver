@@ -138,6 +138,9 @@ enum ConversationRenderer {
         var frontmatterFields = Frontmatter.fields(for: conversation, now: now)
         let body = renderTurns(conversation.turns)
         frontmatterFields.append((bodyHashKey, bodyHash(turns: conversation.turns)))
+        // The saver's own content identity, so a re-save recognises this file
+        // and the archive can find the same conversation saved under two names.
+        frontmatterFields.append((fingerprintKey, Fingerprint.short(conversation, length: 16)))
 
         var out = Frontmatter.block(frontmatterFields)
         out += "\n"
@@ -187,6 +190,12 @@ enum ConversationRenderer {
 
     /// The frontmatter key holding the hash of the rendered turn body.
     static let bodyHashKey = "body-hash"
+
+    /// The frontmatter key holding the saver's own content fingerprint.
+    ///
+    /// Written by the saver so a re-save recognises its output. The archive
+    /// never invents one for a file it did not write — see `ArchiveIndexer`.
+    static let fingerprintKey = "fingerprint"
 
     /// Hash of the turn section, used to prove a file on disk is still exactly
     /// what this renderer produced.

@@ -92,6 +92,32 @@
 				<string>com.apple.finder</string>
 			</dict>
 		</dict>
+		<dict>
+			<key>NSMenuItem</key>
+			<dict>
+				<key>default</key>
+				<string>Search Archived Chats</string>
+			</dict>
+			<key>NSMessage</key>
+			<string>searchArchive</string>
+			<key>NSPortName</key>
+			<string>Clipboard_saver</string>
+			<!--
+				Plain text only, unlike the other services. The query is a phrase
+				the user types, not rich content, and advertising public.html here
+				would offer the service whenever anything rich is selected — which
+				is most of the time, and mostly wrong.
+			-->
+			<key>NSSendTypes</key>
+			<array>
+				<string>NSStringPboardType</string>
+			</array>
+			<key>NSRequiredContext</key>
+			<dict>
+				<key>NSApplicationIdentifier</key>
+				<string>com.apple.finder</string>
+			</dict>
+		</dict>
 	</array>
 </dict>
 </plist>

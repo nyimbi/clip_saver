@@ -102,6 +102,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         saveInteractively(pasteboard: .general, into: [folder], reveal: true, error)
     }
 
+    /// "Search Archived Chats" — the Services menu, query taken from the
+    /// pasteboard.
+    ///
+    /// This is what turns a folder of files into something worth keeping. An
+    /// archive you cannot search is a folder of documents; an archive you can
+    /// search is a memory. It deliberately does not use `NSPasteboard` write
+    /// types like the other services: it accepts plain text, so it is offered
+    /// wherever there is text to read, and the result is put on the pasteboard
+    /// and shown in a panel.
+    @objc func searchArchive(_ pasteboard: NSPasteboard, userData: String, error: AutoreleasingUnsafeMutablePointer<NSString>) {
+        let query = pasteboard.string(forType: .string)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+        guard !query.isEmpty else {
+            return finish(.failed("Copy some words to search for, then run this service again."), reveal: false, error)
+        }
+
+        let result = SearchService.search(query, folders: SearchService.folders())
+        let markdown = result.markdown()
+
+        // The result goes on the pasteboard as well as into a panel: the user
+        // almost always wants to paste the match somewhere, and this is the same
+        // clipboard-first workflow as the rest of the app.
+        pasteboard.clearContents()
+        pasteboard.setString(markdown, forType: .string)
+
+        presentSearchResult(markdown, error: error)
+    }
+
     /// Where a save should land.
     ///
     /// Prefers what was selected — a right-clicked folder is used directly, a
@@ -341,6 +370,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     // MARK: - Reporting
+
+    /// Shows a read-only result panel and terminates.
+    ///
+    /// A modal panel rather than a window, for the same reason the save panel is
+    /// modal: the process is about to exit, and a window would vanish with it.
+    private func presentSearchResult(_ markdown: String, error: AutoreleasingUnsafeMutablePointer<NSString>) {
+        let panel = NSSavePanel()
+        panel.canCreateDirectories = true
+        panel.title = "Archived Chats"
+        panel.prompt = "Copy"
+        panel.message = "Results are on the clipboard."
+        panel.nameFieldStringValue = "Archived Chats.md"
+        panel.directoryURL = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask).first
+
+        if panel.runModal() == .OK {
+            let target = panel.url ?? panel.directoryURL?
+                .appendingPathComponent(panel.nameFieldStringValue)
+            if let target {
+                try? markdown.write(to: target, atomically: true, encoding: .utf8)
+                finish(.written([target]), reveal: false, error)
+                return
+            }
+        }
+        // A cancelled panel is not an error: the clipboard already holds the
+        // answer, which is the part the user came for.
+        finish(.cancelled, reveal: false, error)
+    }
 
     /// A non-nil `error` makes macOS show the message; a nil one lets the
     /// service complete silently.

@@ -55,8 +55,8 @@ final class ServiceContractTests: XCTestCase {
         info["NSServices"] as? [[String: Any]] ?? []
     }
 
-    func testThreeServicesAreDeclared() {
-        XCTAssertEqual(services.count, 3)
+    func testFourServicesAreDeclared() {
+        XCTAssertEqual(services.count, 4)
     }
 
     /// The background service must declare no `NSSendTypes`. Finder only offers
@@ -75,6 +75,26 @@ final class ServiceContractTests: XCTestCase {
         let types = folder["NSSendTypes"] as? [String] ?? []
         XCTAssertTrue(types.contains("public.file-url"))
         XCTAssertTrue(types.contains("NSFilenamesPboardType"))
+    }
+
+    /// Search takes a typed phrase, not rich content. Advertising `public.html`
+    /// would offer it whenever anything rich is selected — which is most of the
+    /// time, and almost always a request to *save* something rather than to
+    /// search for it.
+    func testTheSearchServiceTakesPlainTextOnly() throws {
+        let search = try XCTUnwrap(services.first { ($0["NSMessage"] as? String) == "searchArchive" })
+        let types = search["NSSendTypes"] as? [String] ?? []
+        XCTAssertEqual(types, ["NSStringPboardType"])
+        XCTAssertFalse(types.contains("public.html"))
+        XCTAssertFalse(types.contains("public.rtf"))
+    }
+
+    /// Search is only useful in a folder context, and declaring no context would
+    /// put it in every application's Services menu.
+    func testTheSearchServiceIsOfferedInFinder() throws {
+        let search = try XCTUnwrap(services.first { ($0["NSMessage"] as? String) == "searchArchive" })
+        let context = search["NSRequiredContext"] as? [String: String]
+        XCTAssertEqual(context?["NSApplicationIdentifier"], "com.apple.finder")
     }
 
     /// Every `NSMessage` must name a method that the services provider
