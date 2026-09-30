@@ -38,11 +38,36 @@ if [ ! -d "$APP_BUNDLE" ]; then
 	exit 1
 fi
 
+# The extension's ID.
+#
+# An unpacked extension with no `key` in its manifest has no ID of its own:
+# Chrome derives one from the absolute path, as the first 32 hex digits of its
+# SHA-256 mapped onto a-p. So it can be computed instead of copied.
+#
+# It is offered as a suggestion rather than trusted outright, because the exact
+# path string Chrome hashes depends on how the folder was chosen, and a wrong
+# guess writes a manifest the browser ignores -- which looks exactly like the
+# app not being installed. The user confirms it against chrome://extensions, and
+# anything they type wins.
+derive_id() {
+	printf '%s' "$1" | shasum -a 256 | cut -c1-32 | tr '0123456789abcdef' 'abcdefghijklmnop'
+}
+
+SUGGESTED_ID="$(derive_id "$(cd "$REPO/bridge/extension" && pwd -P)")"
 EXTENSION_ID="${1:-${CLIPBOARD_SAVER_EXTENSION_ID:-}}"
+
 if [ -z "$EXTENSION_ID" ]; then
 	echo
-	echo "Paste the extension ID from chrome://extensions (or about:debugging)."
+	echo "Chrome gives an unpacked extension an ID derived from its folder, and for"
+	echo "this folder that is:"
+	echo
+	echo "    $SUGGESTED_ID"
+	echo
+	echo "Load bridge/extension in chrome://extensions and check it matches. If it does"
+	echo "not, paste the real one instead -- the browser hashes the path you chose, so"
+	echo "a symlinked or relative path gives a different answer."
 	read -r -p "Extension ID (leave empty to skip the manifest): " EXTENSION_ID
+	EXTENSION_ID="${EXTENSION_ID:-$SUGGESTED_ID}"
 fi
 
 # 1. The binary. A copy rather than a symlink: the browser launches the path in
@@ -61,6 +86,16 @@ fi
 # identical to the host not existing.
 if ! printf '%s' "$EXTENSION_ID" | grep -Eq '^[a-p]{32}$'; then
 	echo "That does not look like an extension ID: expected 32 characters a-p." >&2
+	exit 1
+fi
+
+# A placeholder passes the shape check perfectly well -- 'a' is in 'a-p', so a
+# run of thirty-two a's is a syntactically valid id. And it is exactly what gets
+# typed when nobody has the real one to hand, so it is called out by name rather
+# than left to fail later as "the app is not installed".
+if printf '%s' "$EXTENSION_ID" | grep -Eq '^(.)\1{31}$'; then
+	echo "That is a placeholder, not a real ID: every character is the same." >&2
+	echo "Load the extension first, then copy the real one from chrome://extensions." >&2
 	exit 1
 fi
 
@@ -100,4 +135,5 @@ fi
 
 echo
 echo "Restart the browser, then try 'Save conversation as Markdown' on a page."
-echo "If it fails: chrome://extensions -> the extension -> 'Errors' shows the reason."
+echo "If it fails, run ./bridge/host/doctor.sh -- it says which of the three"
+echo "things above is wrong, rather than leaving one message for all three."

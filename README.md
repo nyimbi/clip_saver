@@ -63,6 +63,18 @@ panel even if that means replacing a file — subsequent directories are
 collision-resolved so a multi-folder save can never silently destroy a second
 file.
 
+## When a save does nothing
+
+```sh
+./bridge/host/doctor.sh
+```
+
+Four things have to line up before a save works, and from the extension's side
+they all look the same: the port opens, closes with nothing on it, and the user
+is told the app is not installed. The doctor checks each one and names it — the
+app, the assembled extension, the host binary, the manifest in each browser's own
+directory, and what Chrome's profile thinks of the extension. It changes nothing.
+
 ## Building the extension
 
 ```sh
@@ -160,7 +172,7 @@ testable in-process.
 ./scripts/test.sh
 ```
 
-**462 Swift tests, 125 bridge tests, 0 failures**, plus a compiled-host
+**462 Swift tests, 128 bridge tests, 0 failures**, plus a compiled-host
 end-to-end run and a real Chrome package.
 
 The bridge is in the same script on purpose. Three defects reached `main` with

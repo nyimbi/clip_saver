@@ -239,6 +239,56 @@ whole path end to end -- extension source, native framing, compiled host, saved
 file -- with the payload coming out of the real extractor so it cannot drift from
 what the extension sends. A second save is asserted to be a no-op.
 
+## A truncated conversation that claimed to be complete
+
+Found by testing the *built* bundle rather than the sources, which is the only
+place the whole chain exists.
+
+A conversation that started at the top of the list was harvested as two messages
+out of twenty, and reported `complete: true`. A file that looks like the
+conversation, is missing eighteen messages, and says nothing -- the worst failure
+this feature can produce.
+
+The cause was a leg reversal. An upward walk ends at the top; the downward walk
+that follows begins by *jumping* to the top, which is where the viewport already
+is. A jump that does not move was being read as evidence the direction was spent,
+and two of those ended the walk.
+
+A jump is a reposition, not a step. The evidence that a direction is done is
+that a *step* could not move, and a jump never supplies it, because the next step
+is the one that will. One flag, and a comment explaining why the obvious version
+is wrong.
+
+The randomised harness that found the two previous truncation bugs did not catch
+this one, because its scroller always let a jump move something. A model that is
+convenient to write is not the same as a model that is faithful; the failing case
+is the one where the jump is a no-op, which is exactly the case a test built to
+exercise the normal path leaves out.
+
+## Knowing which link is broken
+
+Four things have to line up before a save works, and from the extension's side
+all four look identical: the port opens, closes with nothing on it, and the user
+is told the app is not installed. That sentence is true in every case and useful
+in none.
+
+`bridge/host/doctor.sh` checks each one and names it -- the app, the assembled
+extension, the host binary, the manifest in each browser's own directory, and
+what Chrome's profile thinks of the extension. It is read-only, so it is safe to
+run at any time, and it is the first thing to run when a save does nothing.
+
+Run against this machine, it found the real problem immediately: a placeholder ID
+(`aaaa...`) was installed in all four browsers' manifests. It passes the shape
+check, because `a` is inside `a-p`, and a run of thirty-two `a`s is a
+syntactically valid extension ID. It is also exactly what gets written when
+nobody has the real one to hand, and Chrome rejects it with "forbidden" -- which
+the extension reports as the app not being installed.
+
+For an unpacked extension with no `key` in its manifest, Chrome derives the ID
+from the absolute path, so `install.sh` now computes it instead of asking. It is
+offered as a suggestion and confirmed by the user, because the exact path string
+Chrome hashes depends on how the folder was chosen.
+
 ## Known limits
 
 - **Extensions do not record the source of a capture.** Chat providers do not

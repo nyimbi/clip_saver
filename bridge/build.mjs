@@ -309,12 +309,22 @@ export function build({ check = false } = {}) {
 	const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
 
 	if (check) {
-		const stale = ENTRY_POINTS.filter(({ out }) => {
+		// Compared by content, not by mtime. A fresh checkout gives every file
+		// the same timestamp, and `cp -R` gives the copy a newer one, so a
+		// timestamp check is either permanently stale or permanently clean. The
+		// graph is six files; rebuilding to compare costs nothing.
+		const stale = [];
+		for (const { entry, out } of ENTRY_POINTS) {
 			const built = join(here, 'extension', out);
-			return !existsSync(built) || statSync(built).mtimeMs < statSync(join(here, 'extension', 'content.js')).mtimeMs;
-		});
+			if (!existsSync(built)) {
+				stale.push(out);
+				continue;
+			}
+			const expected = emit(collectModules(entry), idOf(entry));
+			if (readFileSync(built, 'utf8') !== expected) stale.push(out);
+		}
 		if (stale.length > 0) {
-			throw new Error(`the built extension is out of date: ${stale.map((p) => p.out).join(', ')}`);
+			throw new Error(`the built extension is out of date: ${stale.join(', ')} -- run: (cd bridge && node build.mjs)`);
 		}
 		return { written: [], validated: true };
 	}

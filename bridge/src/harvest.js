@@ -226,6 +226,8 @@ export async function harvestWindowed({
 	let lastTop = null;
 	/** Set on a leg change, so the new leg starts from the far end. */
 	let jumping = true;
+	/** Whether this pass was a reposition rather than a step. */
+	let jumpedThisPass = false;
 
 	while (true) {
 		if (signal?.aborted) {
@@ -276,6 +278,7 @@ export async function harvestWindowed({
 		if (jumping) {
 			viewport.setScrollTop(direction === 'up' ? span : 0);
 			jumping = false;
+			jumpedThisPass = true;
 		} else if (direction === 'up') {
 			viewport.setScrollTop(Math.max(before - step, 0));
 		} else {
@@ -311,7 +314,17 @@ export async function harvestWindowed({
 		// capture. "The viewport stopped moving" is the only direct evidence that
 		// a direction is exhausted; a pass count is a proxy for it, and the proxy
 		// is wrong exactly when windows are small.
-		if (lastTop !== null && after === lastTop) {
+		// A jump is a reposition, not a step, and it is allowed to land where the
+		// viewport already is: after an upward leg that ends at the top, the
+		// downward leg jumps to 0, which is exactly where it already is.
+		//
+		// Counting that as "this direction is spent" ended the whole walk. A
+		// twenty-message thread that started at the top was harvested as two
+		// messages and reported `complete: true` -- a file that looks like the
+		// conversation and is missing the other eighteen. The evidence that a
+		// direction is done is that a *step* could not move, and a jump never
+		// supplies that evidence, because the next step is the one that will.
+		if (!jumpedThisPass && lastTop !== null && after === lastTop) {
 			barrenLegs += 1;
 			// Two barren legs means both directions have been walked end to end
 			// without revealing anything new, which is the thread being finished.
@@ -325,6 +338,7 @@ export async function harvestWindowed({
 			jumping = true;
 		}
 		lastTop = after;
+		jumpedThisPass = false;
 	}
 
 	return {

@@ -67,6 +67,14 @@ if [ "${BRIDGE:-1}" = "1" ]; then
 	# every test in the repository.
 	(cd bridge && node build.mjs)
 
+	echo "--- shell scripts"
+	# Syntax only. These install into /Applications and into browser profile
+	# directories, so nothing here runs them.
+	for script in bridge/host/build.sh bridge/host/install.sh bridge/host/doctor.sh; do
+		bash -n "$script" || exit 1
+	done
+	echo "the shell scripts parse"
+
 	echo "--- host build"
 	# Built, not just tested: a stale or unbuildable host passes every unit test
 	# in the repository.

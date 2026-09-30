@@ -99,6 +99,21 @@ function makeChrome({ lastError = null } = {}) {
  * appears to hang, and the assertion that already passed never gets reported.
  * The timers still fire; they just stop keeping the loop alive.
  */
+/**
+ * Timers that fire on the next tick instead of after their delay.
+ *
+ * The harvester settles for 400ms between scroll steps on purpose -- virtualised
+ * lists mount rows asynchronously and a shorter wait silently skips them. Paying
+ * that in real time costs minutes per test, and the delay is not what these
+ * tests are checking; the behaviour around it is. The ordering is preserved, so
+ * a step still sees the rows the previous one mounted.
+ */
+function fastTimers() {
+	const real = setTimeout;
+	const unref = { setTimeout: (fn, ms, ...rest) => { const h = real(fn, 0, ...rest); h.unref?.(); return h; }, clearTimeout };
+	return { ...unref, unrefed: unref };
+}
+
 function unrefedTimers() {
 	const real = setTimeout;
 	return {
@@ -409,3 +424,107 @@ test('a menu click for a page asks for an article, not a conversation', async ()
 
 	assert.ok(log.toTab.some(({ message }) => message?.action === 'capturePage'));
 });
+
+// MARK: - Harvesting through the bundle
+
+/**
+ * A page that grows as you scroll to the bottom of it.
+ *
+ * The harvester reads `scrollTop`, `scrollHeight` and `clientHeight` off the
+ * scroller and steps until nothing new appears. jsdom reports all three as zero,
+ * so without this the harvester sees a page that cannot scroll and exits having
+ * read one window -- which looks exactly like a working capture and proves
+ * nothing. Defining them is what makes the scroll real.
+ */
+function scrollingConversation(totalMessages, { pageHeight = 600, clientHeight = 300 } = {}) {
+	const rows = [];
+	for (let index = 0; index < totalMessages; index += 1) {
+		const role = index % 2 === 0 ? 'user' : 'assistant';
+		rows.push(
+			`<div data-testid="${role}-message" data-message-id="m${index}">message ${index}</div>`
+		);
+	}
+
+	const html = `<!doctype html><html><head><title>Long thread</title></head>
+		<body><main>${rows.slice(0, 3).join('\n')}</main></body></html>`;
+	const dom = new JSDOM(html, { url: 'https://claude.ai/chat/abc' });
+	const doc = dom.window.document;
+	const main = doc.querySelector('main');
+
+	// Three messages occupy a page; the rest are below the fold and arrive on
+	// demand, which is the shape a virtualised list has.
+	const perPage = 3;
+	let mounted = perPage;
+
+	const geometry = { scrollTop: 0, scrollHeight: perPage * pageHeight, clientHeight };
+	Object.defineProperty(main, 'clientHeight', { get: () => clientHeight, configurable: true });
+	Object.defineProperty(main, 'scrollHeight', {
+		get: () => Math.max(mounted, perPage) * pageHeight,
+		configurable: true,
+	});
+
+	// Approaching the end mounts the next window, which is what a virtualised
+	// list does when it recycles rows.
+	//
+	// Growth has to be keyed on *approaching* the end rather than on having
+	// passed it: the far end is `scrollHeight - clientHeight`, and `scrollHeight`
+	// is only as large as what is mounted, so a list that grows when you reach the
+	// end can never reach the end. That deadlock is easy to write and looks
+	// exactly like a working capture -- one window, no warning.
+	Object.defineProperty(main, 'scrollTop', {
+		get: () => geometry.scrollTop,
+		set: (value) => {
+			geometry.scrollTop = value;
+			if (value + clientHeight >= mounted * pageHeight - 1 && mounted < totalMessages) {
+				mounted = Math.min(mounted + perPage, totalMessages);
+			}
+			const want = rows.slice(0, mounted).join('\n');
+			if (main.innerHTML !== want) main.innerHTML = want;
+		},
+		configurable: true,
+	});
+
+	return { dom, doc, main };
+}
+
+test('the bundled harvester scrolls and collects a long conversation', async () => {
+	// The tests above only ever read one window. This is the actual work: a
+	// forty-message thread that exists in full but is mounted three at a time.
+	// If the bundle wired the viewport or the adapter up wrong, this is where it
+	// shows -- as a file with three messages in it and no warning.
+	const { dom, doc } = scrollingConversation(40);
+	const { chrome, onMessage } = makeChrome();
+	runClassic(join(extensionRoot, 'lib/content.js'), {
+		chrome,
+		window: dom.window,
+		document: doc,
+		timers: fastTimers().unrefed,
+	});
+
+	const response = await new Promise((resolve) => {
+		const [listener] = onMessage;
+		listener({ action: 'capture' }, { id: 'test' }, resolve);
+	});
+
+	assert.equal(response.ok, true, `the capture failed: ${response.error?.message}`);
+	assert.equal(
+		response.conversation.turns.length,
+		40,
+		`only ${response.conversation.turns.length} of 40 messages were harvested`
+	);
+	// Compared as a joined string, not `deepEqual`: the turns are plain objects
+	// built in the bundle's realm and `.map` makes an array in it, so a
+	// prototype-sensitive comparison fails on a value that is in fact equal.
+	assert.equal(
+		response.conversation.turns.map((turn) => turn.role).slice(0, 4).join(','),
+		'user,assistant,user,assistant'
+	);
+	assert.equal(response.conversation.turns.at(-1).body, 'message 39');
+	assert.equal(response.confidence.complete, true, 'a full harvest should report itself complete');
+});
+
+// Reporting an incomplete harvest is checked in test/harvest.test.js, against the
+// harvester directly. Reached through the bundle it needs a faked clock to fail
+// in milliseconds rather than the 300-second cap, and a faked clock that forces
+// a timeout is a weaker test than the real one -- it would be asserting that the
+// code does what the mock says, not that it times out.

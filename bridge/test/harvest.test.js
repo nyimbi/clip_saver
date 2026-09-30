@@ -397,3 +397,82 @@ test('turns are returned in conversation order regardless of start', async () =>
 		);
 	}
 });
+
+/**
+ * A conversation that starts at the top must still be walked to the bottom.
+ *
+ * The failure this guards is the worst one this file can produce: a truncated
+ * capture that reports itself complete. A user gets a file that looks like their
+ * conversation and is missing most of it, and nothing -- badge, toast,
+ * frontmatter -- says otherwise.
+ *
+ * The cause was subtle. An upward leg that ends at the top is followed by a
+ * downward leg whose first move is a *jump* to 0, which is where the viewport
+ * already is. A jump that does not move was being read as "this direction is
+ * spent", and two of those ended the walk. Twenty messages were harvested as
+ * two, and `complete` was true.
+ */
+test('a thread that starts at the top is still walked to the bottom', async () => {
+	const total = 20;
+	const page = 300;
+	const client = 300;
+	let mounted = 1;
+	let top = 0;
+
+	const result = await harvestWindowed({
+		viewport: {
+			scrollTop: () => top,
+			setScrollTop: (value) => {
+				top = Math.max(0, Math.min(value, mounted * page - client));
+				// The next window mounts as the end comes into view.
+				if (top + client >= mounted * page - 1 && mounted < total) mounted += 1;
+			},
+			scrollHeight: () => mounted * page,
+			clientHeight: () => client,
+		},
+		readWindow: () => ({
+			keys: Array.from({ length: mounted }, (_, i) => `k${i}`),
+			turns: [],
+			order: [],
+			reset() {},
+		}),
+		stepSettleMs: 1,
+		idleTimeoutMs: 10_000,
+	});
+
+	assert.equal(result.turns.length, total, `harvested ${result.turns.length} of ${total}`);
+	assert.equal(result.complete, true);
+});
+
+/** The same in reverse: a thread that opens at the bottom is walked upward. */
+test('a thread that starts at the bottom is still walked to the top', async () => {
+	const total = 20;
+	const page = 300;
+	const client = 300;
+	let mounted = 1;
+	// Starts pinned to the end of the one window that exists.
+	let top = 0;
+
+	const result = await harvestWindowed({
+		viewport: {
+			scrollTop: () => top,
+			setScrollTop: (value) => {
+				top = Math.max(0, Math.min(value, mounted * page - client));
+				if (top + client >= mounted * page - 1 && mounted < total) mounted += 1;
+			},
+			scrollHeight: () => mounted * page,
+			clientHeight: () => client,
+		},
+		readWindow: () => ({
+			keys: Array.from({ length: mounted }, (_, i) => `k${i}`),
+			turns: [],
+			order: [],
+			reset() {},
+		}),
+		stepSettleMs: 1,
+		idleTimeoutMs: 10_000,
+	});
+
+	assert.equal(result.turns.length, total, `harvested ${result.turns.length} of ${total}`);
+	assert.equal(result.complete, true);
+});
