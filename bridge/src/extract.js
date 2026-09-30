@@ -18,6 +18,10 @@ import { readAttachments, readReasoning, readToolCalls, readTurnBody } from './a
  */
 
 /** The app that receives conversations. Must match the host manifest's name. */
+const NATIVE_TIMEOUT_MS = 120_000;
+const NOT_INSTALLED =
+	'The Clipboard Saver app does not appear to be installed. Open it once, then try again.';
+
 const NATIVE_HOST = 'datacraft.Clipboard_saver';
 
 /** Protocol version. Must match `BridgeHandler.currentVersion`. */
@@ -314,7 +318,10 @@ function valueAttributeIn(selector) {
  *
  * @param {object} bridge `chrome.runtime` or a stand-in.
  */
-export async function saveConversation(bridge, { conversation, confidence, destination, behaviour = 'ask' }) {
+export async function saveConversation(
+	bridge,
+	{ conversation, confidence, destination, behaviour = 'ask', timeoutMs = NATIVE_TIMEOUT_MS }
+) {
 	const id = crypto.randomUUID();
 
 	const response = await sendNative(bridge, {
@@ -324,7 +331,7 @@ export async function saveConversation(bridge, { conversation, confidence, desti
 		conversation: { ...conversation, confidence },
 		destination: destination ?? null,
 		behaviour,
-	});
+	}, { timeoutMs });
 
 	if (!response.ok) {
 		const error = new ExtractionError(response.error?.message ?? 'The app could not save this conversation.', {
@@ -336,39 +343,120 @@ export async function saveConversation(bridge, { conversation, confidence, desti
 	return response.result;
 }
 
-/** The native messaging round trip, length-prefixed per PROTOCOL.md. */
-function sendNative(bridge, request) {
+/**
+ * The native messaging round trip.
+ *
+ * The framing belongs to the browser, not to us. `port.postMessage` serialises
+ * the value and adds the 4-byte little-endian length prefix that the host reads;
+ * writing that prefix here as well meant the host parsed our prefix as the first
+ * four bytes of a JSON document, and every request came back malformed. The host
+ * smoke tests never saw it because they spoke to the host directly, and a real
+ * port was the only thing that could have.
+ *
+ * So: a plain JSON value out, a plain value in. The host reads and writes the
+ * prefix, and the browser takes care of it in between.
+ *
+ * One port per call, opened and closed. Keeping it open would save a round trip
+ * per message and introduce a port that can die between two saves, which is the
+ * failure mode users actually hit.
+ */
+function sendNative(bridge, request, { timeoutMs = NATIVE_TIMEOUT_MS } = {}) {
 	return new Promise((resolve, reject) => {
-		const port = bridge.runtime.connectNative(NATIVE_HOST);
-		const payload = new TextEncoder().encode(JSON.stringify(request));
-		const framed = new Uint8Array(4 + payload.length);
-		new DataView(framed.buffer).setUint32(0, payload.length, true);
-		framed.set(payload, 4);
+		let port;
+		try {
+			port = bridge.runtime.connectNative(NATIVE_HOST);
+		} catch (error) {
+			reject(new ExtractionError(NOT_INSTALLED, { recoverable: false, cause: error }));
+			return;
+		}
 
-		const chunks = [];
-		port.onMessage.addListener((message) => chunks.push(message));
-
-		port.onDisconnect.addListener(() => {
-			const last = chunks.at(-1);
-			if (last) {
-				try {
-					resolve(JSON.parse(new TextDecoder().decode(last)));
-				} catch (error) {
-					reject(new ExtractionError('The app sent a reply that could not be read.', { cause: error }));
-				}
-			} else {
-				// A disconnect with nothing received is the app not being
-				// installed, which is the single most likely cause and needs
-				// saying so.
-				reject(
-					new ExtractionError(
-						'The Clipboard Saver app does not appear to be installed. Open it once, then try again.',
-						{ recoverable: false }
-					)
-				);
+		let answer;
+		let settled = false;
+		const finish = (fn, value) => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(timer);
+			try {
+				port.disconnect();
+			} catch {
+				// Already gone, which is the state we wanted anyway.
 			}
+			fn(value);
+		};
+
+		// The host can be mid-save on another connection, and a wedged app should
+		// surface as a failed save rather than a spinner that never stops.
+		const timer = setTimeout(
+			() => finish(reject, new ExtractionError('The app did not answer. It may be waiting on a save.', { recoverable: true })),
+			timeoutMs
+		);
+
+		port.onMessage.addListener((message) => {
+			answer = message;
 		});
 
-		port.postMessage(framed);
+		port.onDisconnect.addListener(() => {
+			if (settled) return;
+			// Reading `lastError` is also what stops Chrome logging an unchecked
+			// error. Its message is the only thing that distinguishes the two
+			// causes a user can actually fix: the app is not installed, or the
+			// host manifest does not list this extension's id. Both arrive as
+			// "no reply", and a single vague sentence for both is what makes this
+			// the most-reported problem with native messaging.
+			const reason = bridge.runtime.lastError?.message;
+			if (answer === undefined) {
+				finish(reject, new ExtractionError(describeDisconnect(reason), { recoverable: false }));
+				return;
+			}
+			finish(resolve, normalise(answer));
+		});
+
+		port.postMessage(request);
 	});
+}
+
+/**
+ * Turns a disconnect into something the user can act on.
+ *
+ * Both causes present as silence, and they have completely different fixes: one
+ * is an app the user has to open, the other is an extension id a developer has
+ * to put in a manifest. Chrome's own wording names which, so it is used rather
+ * than replaced with something vaguer.
+ */
+function describeDisconnect(reason) {
+	if (typeof reason === 'string' && reason.length > 0) {
+		if (/forbidden|not allowed|not in the list/i.test(reason)) {
+			return 'The app is installed, but it has not authorised this extension yet. Run the host installer in bridge/host.';
+		}
+		if (/not found|no such/i.test(reason)) {
+			return NOT_INSTALLED;
+		}
+	}
+	return NOT_INSTALLED;
+}
+
+/**
+ * The host's reply, as an object.
+ *
+ * It is normally already an object, because the browser decodes the JSON for
+ * us. A host that answered with bytes is tolerated, because that is a legal
+ * shape for the same protocol and a hard failure on it would be a bug report
+ * about somebody else's implementation.
+ */
+function normalise(message) {
+	if (typeof message === 'string') {
+		try {
+			return JSON.parse(message);
+		} catch {
+			return { ok: false, error: { message: 'The app sent a reply that could not be read.', recoverable: true } };
+		}
+	}
+	if (message instanceof ArrayBuffer || ArrayBuffer.isView(message)) {
+		try {
+			return JSON.parse(new TextDecoder().decode(message));
+		} catch {
+			return { ok: false, error: { message: 'The app sent a reply that could not be read.', recoverable: true } };
+		}
+	}
+	return message;
 }

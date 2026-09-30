@@ -1,18 +1,23 @@
 /**
- * The service worker: context menu, keyboard command, and the badge.
+ * The service worker: menu, keyboard command, badge, and the one host port.
  *
- * Nothing structural happens here. The content script extracts, this file
- * relays, and the app saves. Keeping it that thin means there is one place to
- * look when a save does not appear, and it is small.
+ * It does not see any pages and does not need to. A content script extracts and
+ * hands back plain data; this file decides what to do with it. That split is not
+ * a preference -- `chrome.runtime` messaging serialises with JSON, so a
+ * `Document` or a `Range` cannot be sent here at all, and the previous design
+ * asked for exactly that.
+ *
+ * The host connection lives here rather than in the content script for one
+ * concrete reason: the native host serves one connection at a time, so two tabs
+ * saving at the same moment need something to serialise them. One port, in one
+ * place, does that. A content script per tab would open one each.
  */
 
-import { adapterFor } from './adapters.js';
-import { ExtractionError, extractConversation, saveConversation } from './extract.js';
+import { saveConversation } from '../src/extract.js';
 
 const MENU_SAVE = 'clipboard-saver-save-conversation';
 const MENU_SAVE_PAGE = 'clipboard-saver-save-page';
 const MENU_CANCEL = 'clipboard-saver-cancel';
-const HOSTNAME_WHITELIST = new Set(['claude.ai', 'chatgpt.com', 'chat.openai.com', 'gemini.google.com']);
 
 // MARK: - Menu
 
@@ -29,10 +34,10 @@ chrome.runtime.onInstalled.addListener(() => {
 		chrome.contextMenus.create({
 			id: MENU_SAVE_PAGE,
 			title: 'Save page as Markdown',
-			// `page` on any host, not just the three supported ones. `activeTab`
-			// is granted per invocation, so this needs no standing access to every
-			// site the user visits -- which is the whole reason a generic page
-			// capture can exist without a `<all_urls>` permission.
+			// `page` on any host, not just the three supported ones. A
+			// context-menu click grants `activeTab` for that page, so this needs
+			// no standing access to every site the user visits -- which is the
+			// whole reason a generic page capture can exist without `<all_urls>`.
 			contexts: ['page'],
 		});
 		chrome.contextMenus.create({
@@ -44,123 +49,103 @@ chrome.runtime.onInstalled.addListener(() => {
 	});
 });
 
-chrome.contextMenus.onClicked.addListener(async (info, tab) => {
-	if (info.menuItemId === MENU_CANCEL) {
-		chrome.tabs.sendMessage(tab.id, { action: 'cancel' });
-		return;
-	}
+chrome.contextMenus.onClicked.addListener((info, tab) => {
 	if (!tab?.id) return;
-	if (info.menuItemId === MENU_SAVE) {
-		await capture(tab.id, { behaviour: 'ask' });
+	if (info.menuItemId === MENU_CANCEL) {
+		chrome.tabs.sendMessage(tab.id, { action: 'cancel' }).catch(() => {});
 		return;
 	}
-	if (info.menuItemId === MENU_SAVE_PAGE) {
-		await capturePage(tab.id);
-	}
+	if (info.menuItemId === MENU_SAVE) captureConversation(tab.id);
+	if (info.menuItemId === MENU_SAVE_PAGE) captureArticle(tab.id);
 });
 
 chrome.commands.onCommand.addListener(async (command) => {
 	if (command !== 'save-conversation') return;
 	const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-	if (!tab?.id) return;
-	await capture(tab.id, { behaviour: 'auto' });
+	if (tab?.id) captureConversation(tab.id);
 });
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+/** Progress and completion, from whichever content script is working. */
+chrome.runtime.onMessage.addListener((message) => {
 	if (message?.action === 'progress') {
-		chrome.action.setBadgeText({ text: message.count ? String(message.count) : '' });
-		return;
+		chrome.action.setBadgeText({ text: message.count ? String(message.count) : '…' });
 	}
-	if (message?.action === 'done') {
-		chrome.action.setBadgeText({ text: '' });
-		return;
-	}
-	return undefined;
 });
 
-/** Saves whatever article the page holds. */
-async function capturePage(tabId) {
-	chrome.action.setBadgeText({ text: '…' });
-	try {
-		const response = await sendToTab(tabId, { action: 'extractPage' });
-		if (!response?.supported) {
-			throw new ExtractionError('This page could not be read. Try reloading it.', { recoverable: true });
-		}
-		if (!response.page) {
-			throw new ExtractionError(response.reason ?? 'No article was found on this page.', { recoverable: false });
-		}
+// MARK: - Capture
 
-		const result = await saveConversation(chrome.runtime, {
+/** Tabs with a capture in flight, so a second click does not start a second. */
+const running = new Set();
+
+async function captureConversation(tabId) {
+	if (running.has(tabId)) return;
+	running.add(tabId);
+	await badge(tabId, '…');
+
+	try {
+		const response = await sendToTab(tabId, { action: 'capture' });
+		if (!response?.ok) throw response?.error ?? { message: 'The page did not answer.' };
+
+		// `behaviour: 'ask'` from the menu, so the user chooses the folder.
+		// The command key skips the prompt, which is the point of a shortcut.
+		const result = await save(chrome.runtime, {
+			conversation: response.conversation,
+			confidence: response.confidence,
+			behaviour: 'ask',
+		});
+
+		await finish(tabId, summarise(result, response.confidence));
+	} catch (error) {
+		await finish(tabId, { ok: false, message: error?.message ?? 'The capture failed.' });
+	} finally {
+		running.delete(tabId);
+	}
+}
+
+async function captureArticle(tabId) {
+	await badge(tabId, '…');
+
+	try {
+		const response = await sendToTab(tabId, { action: 'capturePage' });
+		if (!response?.ok) throw response?.error ?? { message: 'This page could not be read.' };
+
+		const result = await save(chrome.runtime, {
 			conversation: {
 				title: response.page.title,
 				source: 'web',
 				model: null,
-				url: null,
+				// The page's own URL, not null. The article belongs somewhere, and
+				// the frontmatter is where a reader will look for it.
+				url: response.page.url ?? null,
 				// `format: 'html'` tells the app to convert, so the structural
-				// converter stays in Swift with its tests rather than being
-				// reimplemented in JavaScript.
+				// converter stays in Swift with its 64 tests behind it rather than
+				// being reimplemented in JavaScript here.
 				turns: [{ role: 'assistant', body: response.page.html, format: 'html' }],
 			},
 			confidence: response.page.confidence,
 			behaviour: 'ask',
 		});
 
-		await notify(tabId, summarise(result, response.page.confidence));
+		await finish(tabId, summarise(result, response.page.confidence));
 	} catch (error) {
-		await notify(tabId, { ok: false, message: error?.message ?? 'The capture failed.' });
-	} finally {
-		chrome.action.setBadgeText({ text: '' });
+		await finish(tabId, { ok: false, message: error?.message ?? 'The capture failed.' });
 	}
 }
 
-// MARK: - Capture
+/**
+ * One save at a time.
+ *
+ * The host serves a single connection, and two of them at once produce two
+ * half-read streams rather than an error. Queueing costs the second tab a
+ * moment; not queueing costs it a corrupted file, silently.
+ */
+let queue = Promise.resolve();
 
-/** The in-flight capture per tab, so it can be cancelled. */
-const running = new Map();
-
-async function capture(tabId, { behaviour }) {
-	if (running.has(tabId)) return;
-
-	const controller = new AbortController();
-	running.set(tabId, controller);
-	chrome.action.setBadgeText({ text: '…' });
-
-	try {
-		const response = await sendToTab(tabId, { action: 'extract' });
-		if (!response?.supported) {
-			throw new ExtractionError(
-				'This page is not a supported conversation. Open Claude, ChatGPT or Gemini.',
-				{ recoverable: false }
-			);
-		}
-
-		const { conversation, confidence } = await extractConversation(
-			response.document,
-			response.location,
-			response.adapter,
-			{
-				signal: controller.signal,
-				selection: response.selection,
-				onProgress: (count) => chrome.tabs.sendMessage(tabId, { action: 'progress', count }),
-			}
-		);
-
-		const result = await saveConversation(chrome.runtime, {
-			conversation,
-			confidence,
-			behaviour,
-		});
-
-		await notify(tabId, summarise(result, confidence));
-	} catch (error) {
-		await notify(tabId, {
-			ok: false,
-			message: error?.recoverable === false ? `${error.message}` : error?.message ?? 'The capture failed.',
-		});
-	} finally {
-		running.delete(tabId);
-		chrome.action.setBadgeText({ text: '' });
-	}
+function save(bridge, request) {
+	const next = queue.then(() => saveConversation(bridge, request));
+	// A rejection must not poison the queue for every later save.
+	queue = next.catch(() => {});
+	return next;
 }
 
 /**
@@ -171,13 +156,9 @@ async function capture(tabId, { behaviour }) {
  * duplicate and a comprehensible one.
  */
 function summarise(result, confidence) {
-	if (!result?.path) {
-		return { ok: true, message: 'Already saved — nothing changed.' };
-	}
+	if (!result?.path) return { ok: true, message: 'Already saved — nothing changed.' };
 	const name = result.path.split('/').pop();
 	switch (result.action) {
-		case 'writeNew':
-			return { ok: true, message: `Saved ${name}` };
 		case 'append':
 			return { ok: true, message: `Added new messages to ${name}` };
 		case 'writeAlongside':
@@ -190,19 +171,45 @@ function summarise(result, confidence) {
 	}
 }
 
-async function notify(tabId, payload) {
-	chrome.tabs.sendMessage(tabId, { action: 'notify', ...payload });
-	chrome.action.setBadgeBackgroundColor({ color: payload.ok ? '#2e7d32' : '#c62828' });
-	chrome.action.setBadgeText({ text: payload.ok ? '✓' : '!' });
-	setTimeout(() => chrome.action.setBadgeText({ text: '' }), 4000);
+async function badge(tabId, text) {
+	await chrome.action.setBadgeText({ text });
+	await chrome.action.setBadgeBackgroundColor({ color: '#2e7d32' });
 }
 
-function sendToTab(tabId, message) {
+async function finish(tabId, payload) {
+	// The page may have navigated while the harvest was running, in which case
+	// there is nobody left to tell and the badge is the only place the result can
+	// appear. Neither failing is worth surfacing to the user.
+	await chrome.tabs.sendMessage(tabId, { action: 'notify', ...payload }).catch(() => {});
+	await chrome.action.setBadgeBackgroundColor({ color: payload.ok ? '#2e7d32' : '#c62828' });
+	await chrome.action.setBadgeText({ text: payload.ok ? '✓' : '!' });
+	setTimeout(() => chrome.action.setBadgeText({ text: '' }).catch(() => {}), 4000);
+}
+
+/**
+ * Asks the content script, and treats silence as a page we cannot act on.
+ *
+ * The service worker can be suspended, so this has a timeout rather than waiting
+ * forever on a channel that may never open. A reply that arrives after it is
+ * dropped, which is fine: the worker is gone and nobody is waiting.
+ */
+function sendToTab(tabId, message, timeoutMs = 600_000) {
 	return new Promise((resolve) => {
-		chrome.tabs.sendMessage(tabId, message, (response) => {
-			// A content script that is not there is a page we cannot act on, not
-			// an error worth surfacing as one.
-			resolve(chrome.runtime.lastError ? { supported: false } : response);
-		});
+		let settled = false;
+		const finish = (value) => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(timer);
+			resolve(value);
+		};
+		const timer = setTimeout(() => finish({ ok: false, error: { message: 'The page did not answer in time.' } }), timeoutMs);
+
+		chrome.tabs
+			.sendMessage(tabId, message, (response) => {
+				// A content script that is not there is a page we cannot act on --
+				// a page loaded before the extension was installed, or one whose
+				// host is not in `matches`. Not an error worth surfacing as one.
+				finish(chrome.runtime.lastError ? { ok: false, error: { message: 'No content script in that tab. Reload the page and try again.' } } : response);
+			});
 	});
 }

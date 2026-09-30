@@ -63,6 +63,19 @@ panel even if that means replacing a file — subsequent directories are
 collision-resolved so a multi-folder save can never silently destroy a second
 file.
 
+## Building the extension
+
+```sh
+(cd bridge && node build.mjs)   # or just ./scripts/test.sh
+```
+
+`manifest.json` and the two entry scripts are sources. A Chrome extension is a
+sealed root and an MV3 content script is a classic script, so neither can import
+from a sibling directory or use a module graph -- the build flattens both entry
+points into `extension/lib/`, which the manifest names. `bridge/extension/lib/` is
+generated and not committed; loading the extension without building it gives an
+extension that silently does not appear.
+
 ## What the browser extension saves
 
 Right-click a page. The menu adapts to what is there:
@@ -147,8 +160,8 @@ testable in-process.
 ./scripts/test.sh
 ```
 
-**462 Swift tests, 100 bridge tests, 0 failures**, plus a compiled-host
-end-to-end run.
+**462 Swift tests, 125 bridge tests, 0 failures**, plus a compiled-host
+end-to-end run and a real Chrome package.
 
 The bridge is in the same script on purpose. Three defects reached `main` with
 every test green, and all three lived on a boundary that nothing crossed:
@@ -170,9 +183,16 @@ with the payload coming out of the real extractor, so it cannot drift from what
 the extension actually sends. A second save is asserted to change nothing. Set
 `BRIDGE=0` to skip it when node is unavailable.
 
-`cd bridge && node verify-page.html <saved.html> <conversation-url>` runs the
-real adapters against a page you saved from a signed-in session, which is the
-only way to check a selector without a browser.
+The bridge tests load `extension/lib/*.js` as a classic script in a simulated
+browser rather than importing the sources, because the packaged files are the
+ones Chrome runs. That is the check that would have caught an extension which
+could not load: everything else in the repository imported `../src/*` and never
+touched them. When Chrome is installed the gate also runs Chrome's own packer,
+the only validator that knows what a store will accept.
+
+`cd bridge && node verify-page.js <saved.html> <conversation-url>` runs the real
+adapters against a page you saved from a signed-in session, which is the only way
+to check a selector without a browser.
 
 The wrapper is not decoration. The scheme is shared and committed at
 `Clipboard_saver.xcodeproj/xcshareddata/xcschemes/Clipboard_saver.xcscheme`

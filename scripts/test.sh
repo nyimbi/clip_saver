@@ -61,6 +61,12 @@ if [ "${BRIDGE:-1}" = "1" ]; then
 	echo "--- bridge unit tests"
 	(cd bridge && node --test test/)
 
+	echo "--- assemble the extension"
+	# Built, not just tested. The packaged files are the ones Chrome runs, and
+	# until something loaded them, an extension that could not load at all passed
+	# every test in the repository.
+	(cd bridge && node build.mjs)
+
 	echo "--- host build"
 	# Built, not just tested: a stale or unbuildable host passes every unit test
 	# in the repository.
@@ -76,6 +82,31 @@ if [ "${BRIDGE:-1}" = "1" ]; then
 	# the extension actually sends.
 	mkdir -p "$DERIVED/e2e"
 	(cd bridge && node e2e-host.mjs "$DERIVED/clipboard-saver-host" "$DERIVED/e2e")
+
+	# Chrome's own packer, when Chrome is installed.
+	#
+	# It is the only validator that knows the rules a real store enforces, and it
+	# found one no test here would have: a keyboard shortcut written as
+	# "Command+Shift+S" instead of "Ctrl+Shift+S", which Chrome rejects outright
+	# and which every other check here considered fine.
+	CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+	if [ -x "$CHROME" ]; then
+		echo "--- chrome pack"
+		rm -rf "$DERIVED/pack" && mkdir -p "$DERIVED/pack"
+		cp -R bridge/extension "$DERIVED/pack/ext"
+		"$CHROME" --no-first-run --user-data-dir="$DERIVED/pack/profile" \
+			--pack-extension="$DERIVED/pack/ext" >"$DERIVED/pack.log" 2>&1 || true
+		# Chrome reports manifest problems on stderr and still exits 0, so the
+		# only reliable check is whether it produced a package at all.
+		if [ ! -f "$DERIVED/pack/ext.crx" ]; then
+			rg -i "error|invalid" "$DERIVED/pack.log" | head -10 || true
+			echo "chrome refused to package the extension; log: $DERIVED/pack.log" >&2
+			exit 1
+		fi
+		echo "chrome packaged the extension"
+	else
+		echo "--- chrome pack (skipped: no Chrome)"
+	fi
 fi
 
 echo "ok"

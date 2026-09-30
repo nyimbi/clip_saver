@@ -183,6 +183,37 @@ than the feature it delivered.
 - **Attachment references** — recorded, never fetched. The app makes no network
   connections by design, and that is the reason the archive is worth keeping.
 
+## The extension could not load at all
+
+Worth its own section, because every test in the repository passed while the
+extension did not work.
+
+`manifest.json` and the entry scripts sat in `extension/` importing modules from
+`../src/`. Two browser rules make that unworkable: an extension is a sealed root,
+so nothing outside it loads; and an MV3 content script is a classic script, so
+`import` is a `SyntaxError` rather than a feature. Every other test imported
+`../src/*` directly, which means the packaged files -- the ones Chrome runs --
+were never executed by anything.
+
+Two more defects sat behind it. The service worker asked the content script for
+`document`, `location` and a `Range`, none of which survive `chrome.runtime`
+messaging, which serialises with JSON. And it added a 4-byte length prefix
+before `port.postMessage`, on the belief that Chrome passes bytes through; Chrome
+adds that prefix itself, so the host read our prefix as the first four bytes of a
+JSON document and every request came back malformed.
+
+Fixed by inverting the split: the content script extracts, because it is the
+only part that can see the page, and returns plain data; the worker owns the
+single host port, because the host serves one connection at a time. `bridge/build.mjs`
+flattens the graph into `extension/lib/` with no dependencies, and refuses an
+import cycle rather than emitting bindings that would be undefined at runtime.
+
+Chrome's own packer then found a fourth: the keyboard shortcut was written
+`Command+Shift+S`, and Chrome rejects a literal `Command` -- the manifest takes
+`Ctrl`, which the browser maps per platform. Nothing else in the repository
+considered that wrong. `scripts/test.sh` now runs the packer when Chrome is
+installed, and asserts the rule so it does not need Chrome to catch it.
+
 ## What the tests could not see
 
 Three defects reached `main` with every test in the repository green, and all

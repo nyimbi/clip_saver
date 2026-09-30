@@ -1,7 +1,25 @@
 # Loading the extension
 
-The extension is unpacked, not packaged. There is no build step: `manifest.json`
-is Manifest V3, the modules are plain ES modules, and nothing needs compiling.
+The extension is loaded unpacked, but it is **assembled** first.
+
+`manifest.json` and the two entry scripts are sources. They live beside the code
+they use, import it as ordinary ES modules, and are not loadable as they stand --
+for two reasons that are both browser rules rather than preferences:
+
+- A Chrome extension is a sealed root. Nothing outside `extension/` can be
+  loaded, and `../src/adapters.js` is outside it.
+- An MV3 content script is a **classic** script. It has no `import` and no module
+  graph, so even a copy inside the root would be a `SyntaxError` at load.
+
+So `node build.mjs` resolves the graph and flattens it into one self-contained
+script per entry point, in `extension/lib/`, which the manifest names. The build
+has no dependencies: the runtime is a page scraper that reads other people's
+DOM, and a dependency tree is attack surface in someone else's browser. The six
+modules it flattens use named exports and no import cycles, and the cycle is
+checked rather than assumed.
+
+`bridge/extension/lib/` is generated and not committed. Run `node build.mjs`, or
+just `./scripts/test.sh`, which builds and validates it on every run.
 
 ## 1. Build and install the host
 
@@ -21,6 +39,10 @@ extension ID, which does not exist until the extension is loaded.
 
 ## 2. Load the extension
 
+```sh
+(cd bridge && node build.mjs)
+```
+
 - **Chrome / Brave / Edge / Arc** — `chrome://extensions`, enable Developer mode,
   "Load unpacked", choose `bridge/extension`.
 - **Firefox** — `about:debugging#/runtime/this-firefox`, "Load Temporary Add-on",
@@ -30,6 +52,23 @@ extension ID, which does not exist until the extension is loaded.
 
 Re-run `install.sh` and paste the extension ID it asks for. Copy it from the
 extension's card in `chrome://extensions`.
+
+## What crosses between the two halves
+
+A content script extracts and the worker saves, and the split is not negotiable:
+`chrome.runtime` messaging serialises with JSON, so a `Document` or a `Range`
+cannot cross it at all. An earlier version of this extension handed both to the
+worker and would have failed on the first message in the browser, with no test
+anywhere in the repository able to see it.
+
+What crosses now is plain data -- a conversation, a confidence report, a count --
+and the content script verifies that it is plain before sending, so a stray
+non-serialisable value is reported as itself rather than as a mysterious failure
+in the app.
+
+The one native-messaging port lives in the worker, because the host serves a
+single connection at a time and two tabs saving at once need something to
+serialise them.
 
 ## What you can and cannot check here
 
